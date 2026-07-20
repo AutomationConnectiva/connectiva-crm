@@ -383,7 +383,7 @@ function SidebarContent({ collapsed, setCollapsed, activePage, goTo, onCloseMobi
           )
         })}
       </nav>
-      <div className="crm-sidebar-foot">© 2024 ConnectivaCRM</div>
+      <div className="crm-sidebar-foot">© ConnectivaCRM</div>
     </>
   )
 }
