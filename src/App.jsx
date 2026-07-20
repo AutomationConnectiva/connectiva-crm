@@ -376,15 +376,6 @@ function PeoplePage({ showToast }) {
   const [editForm, setEditForm] = useState(null)
   const [saving, setSaving] = useState(false)
 
-  // --- Select-and-convert-to-lead ---
-  const [selectedIds, setSelectedIds] = useState(new Set())
-  const [convertStep, setConvertStep] = useState(null) // null | 'form' | 'confirm'
-  const [leadForm, setLeadForm] = useState({
-    lead_purpose: '', lead_status: 'New', nurture_stage: '', owner: '',
-    cold_calling: false, social_media: false, email_campaign: false, notes: '',
-  })
-  const [convertSubmitting, setConvertSubmitting] = useState(false)
-
   const fetchPeople = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -415,38 +406,6 @@ function PeoplePage({ showToast }) {
   // Reset to page 1 whenever the search changes so you don't get stranded
   // on a page that no longer has any matching rows.
   useEffect(() => { setPeoplePage(1) }, [search])
-
-  const toggleSelect = (id) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-  const selectAllFiltered = () => setSelectedIds(new Set(filtered.map(p => p.person_id)))
-  const clearSelection = () => setSelectedIds(new Set())
-
-  const setLeadField = (k) => (e) => setLeadForm({ ...leadForm, [k]: e.target.value })
-
-  const submitConvert = async () => {
-    setConvertSubmitting(true)
-    const rows = people
-      .filter(p => selectedIds.has(p.person_id))
-      .map(p => ({
-        person_id: p.person_id,
-        company_id: p.company_id || null,
-        event_id: null, // this flow doesn't scope leads to an event — say if it should
-        ...leadForm,
-      }))
-    const { error } = await supabase.from('leads').insert(rows)
-    setConvertSubmitting(false)
-    if (error) { showToast(`Couldn't create leads: ${error.message}`, true); return }
-    showToast(`${rows.length} ${rows.length === 1 ? 'lead' : 'leads'} created`)
-    setSelectedIds(new Set())
-    setConvertStep(null)
-    setLeadForm({ lead_purpose: '', lead_status: 'New', nurture_stage: '', owner: '', cold_calling: false, social_media: false, email_campaign: false, notes: '' })
-  }
 
   const startEdit = (p) => {
     // Opening a new row for editing discards any unsaved changes on the
@@ -485,87 +444,12 @@ function PeoplePage({ showToast }) {
   return (
     <div>
       <div className="crm-toolbar">
-        {selectedIds.size > 0 && (
-          <button className="crm-toggle-chip on" onClick={() => setConvertStep('form')}>
-            <UserPlus size={13} style={{ marginRight: 4, verticalAlign: -2 }} /> Convert {selectedIds.size} to Lead
-          </button>
-        )}
         <div className="crm-search-box">
           <Search size={15} style={{ color: 'var(--ink-400)' }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, email, company, title, country…" />
         </div>
-        <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({filtered.length})</button>
-        {selectedIds.size > 0 && <button className="crm-toggle-chip" onClick={clearSelection}>Clear selection</button>}
         <span className="crm-count-note">{filtered.length} of {people.length}</span>
       </div>
-
-      {convertStep === 'form' && (
-        <div className="crm-form" style={{ marginBottom: 20 }}>
-          <p className="crm-confirm-note" style={{ margin: 0 }}>
-            These fields apply to all {selectedIds.size} selected {selectedIds.size === 1 ? 'person' : 'people'}. You can still edit any lead individually afterward on the Leads page.
-          </p>
-          <div className="crm-form-row">
-            <div><FieldLabel>Purpose</FieldLabel><input value={leadForm.lead_purpose} onChange={setLeadField('lead_purpose')} className="crm-input" placeholder="e.g. Outreach" /></div>
-            <div>
-              <FieldLabel>Status</FieldLabel>
-              <select value={leadForm.lead_status} onChange={setLeadField('lead_status')} className="crm-select">
-                {LEAD_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className="crm-form-row">
-            <div>
-              <FieldLabel>Nurture stage</FieldLabel>
-              <select value={leadForm.nurture_stage} onChange={setLeadField('nurture_stage')} className="crm-select">
-                <option value="">—</option>
-                {NURTURE_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            <div><FieldLabel>Owner</FieldLabel><input value={leadForm.owner} onChange={setLeadField('owner')} className="crm-input" /></div>
-          </div>
-          <div>
-            <FieldLabel>Outreach channels</FieldLabel>
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-              <label className="crm-checkbox-row"><input type="checkbox" checked={leadForm.cold_calling} onChange={e => setLeadForm({ ...leadForm, cold_calling: e.target.checked })} /> Cold calling</label>
-              <label className="crm-checkbox-row"><input type="checkbox" checked={leadForm.social_media} onChange={e => setLeadForm({ ...leadForm, social_media: e.target.checked })} /> Social / LinkedIn</label>
-              <label className="crm-checkbox-row"><input type="checkbox" checked={leadForm.email_campaign} onChange={e => setLeadForm({ ...leadForm, email_campaign: e.target.checked })} /> Email campaign</label>
-            </div>
-          </div>
-          <div><FieldLabel>Notes (applied to all selected)</FieldLabel><textarea value={leadForm.notes} onChange={setLeadField('notes')} className="crm-textarea" /></div>
-          <div className="crm-confirm-actions">
-            <button className="crm-btn-secondary" onClick={() => setConvertStep(null)}>Cancel</button>
-            <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 20px' }} onClick={() => setConvertStep('confirm')}>
-              Review {selectedIds.size} selected
-            </button>
-          </div>
-        </div>
-      )}
-
-      {convertStep === 'confirm' && (
-        <div style={{ marginBottom: 20 }}>
-          <ConfirmSelectionPanel
-            heading={`Confirm ${selectedIds.size} ${selectedIds.size === 1 ? 'lead' : 'leads'}`}
-            note="These fields will be applied to every person below. Remove anyone who shouldn't become a lead yet."
-            summary={[
-              { label: 'Purpose', value: leadForm.lead_purpose || '—' },
-              { label: 'Status', value: leadForm.lead_status },
-              { label: 'Nurture', value: leadForm.nurture_stage || '—' },
-              { label: 'Owner', value: leadForm.owner || '—' },
-              { label: 'Channels', value: [leadForm.cold_calling && 'Cold call', leadForm.social_media && 'Social', leadForm.email_campaign && 'Email'].filter(Boolean).join(', ') || 'None' },
-            ]}
-            items={people.filter(p => selectedIds.has(p.person_id)).map(p => ({
-              id: p.person_id,
-              primary: `${p.first_name} ${p.last_name}`,
-              secondary: `${p.email}${p.companies?.company_name ? ' · ' + p.companies.company_name : ''}`,
-            }))}
-            onRemove={(id) => toggleSelect(id)}
-            onConfirm={submitConvert}
-            onBack={() => setConvertStep('form')}
-            confirming={convertSubmitting}
-            confirmLabel={`Confirm & create ${selectedIds.size > 0 ? selectedIds.size : ''}`}
-          />
-        </div>
-      )}
 
       {loading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading people…</div>}
       {error && <div className="crm-error">Couldn't load people: {error}</div>}
@@ -575,7 +459,7 @@ function PeoplePage({ showToast }) {
           <table className="crm-table">
             <thead>
               <tr>
-                {['', 'Name', 'Email', 'Job title', 'Company', 'Country', 'Status', ''].map(h => <th key={h}>{h}</th>)}
+                {['Name', 'Email', 'Job title', 'Company', 'Country', 'Status', ''].map(h => <th key={h}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -584,14 +468,6 @@ function PeoplePage({ showToast }) {
                 const av = avatarStyle(p.first_name + p.last_name)
                 return (
                   <tr key={p.person_id} className={isEditing ? 'editing' : ''}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(p.person_id)}
-                        onChange={() => toggleSelect(p.person_id)}
-                        aria-label={`Select ${p.first_name} ${p.last_name}`}
-                      />
-                    </td>
                     {isEditing ? (
                       <>
                         <td>
@@ -640,7 +516,7 @@ function PeoplePage({ showToast }) {
                 )
               })}
               {filtered.length === 0 && (
-                <tr className="crm-empty-row"><td colSpan={8}>No one matches that search.</td></tr>
+                <tr className="crm-empty-row"><td colSpan={7}>No one matches that search.</td></tr>
               )}
             </tbody>
           </table>
