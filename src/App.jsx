@@ -335,8 +335,10 @@ export default function App() {
             </div>
           </div>
           <div className="crm-header-right">
-            <div className="crm-user-avatar">JD</div>
-          </div>
+            <button className="crm-icon-btn" style={{ color: 'var(--ink-700)' }} onClick={() => supabase.auth.signOut()} aria-label="Log out">
+            <LogOut size={18} />
+           </button>
+         </div>
         </header>
 
         <main className="crm-content">
