@@ -217,7 +217,7 @@ function badgeTone(value) {
   if (['contacted', 'warming', 'outreach'].includes(v))
     return { bg: 'var(--accent-soft)', fg: 'var(--accent-ink)' }
 
-  if (['unsubscribed'].includes(v))
+  if (['Unsubscribed'].includes(v))
     return { bg: 'var(--red-soft)', fg: 'var(--red)' }
 
   if (['new', 'cold'].includes(v))
