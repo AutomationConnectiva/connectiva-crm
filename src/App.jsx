@@ -3,7 +3,7 @@ import { supabase } from './lib/supabase'
 import {
   Users, UserPlus, Calendar, Target, Menu, X, Search,
   Building2, Clock, Check, Pencil, Save, XCircle, Loader2,
-  UserCheck, Trash2
+  UserCheck, Trash2, LogOut
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
