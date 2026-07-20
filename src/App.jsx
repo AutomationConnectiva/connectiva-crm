@@ -46,9 +46,25 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// Shared pagination helper — 15 rows per page everywhere it's used.
+const PAGE_SIZE = 15
+function paginate(items, page) {
+  const start = (page - 1) * PAGE_SIZE
+  return items.slice(start, start + PAGE_SIZE)
+}
+function Pagination({ page, setPage, total }) {
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  return (
+    <div className="crm-pagination">
+      <span>Page {page} of {totalPages} · {total} total</span>
+      <button className="crm-page-btn" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}>Prev</button>
+      <button className="crm-page-btn" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next</button>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
-// Styles — plain CSS, no Tailwind dependency (see prior discussion re: your
-// project's build not compiling Tailwind utility classes).
+// Styles — plain CSS, no Tailwind dependency.
 // ---------------------------------------------------------------------------
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap');
@@ -113,6 +129,10 @@ const CSS = `
   .crm-toggle-chip.on { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
   .crm-count-note { font-size: 12.5px; color: var(--ink-400); margin-left: auto; white-space: nowrap; }
 
+  .crm-pagination { display: flex; align-items: center; gap: 10px; justify-content: flex-end; padding: 12px 4px; font-size: 13px; color: var(--ink-700); }
+  .crm-page-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 13px; }
+  .crm-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
   .crm-table-wrap { border: 1px solid var(--line); background: var(--surface); border-radius: 16px; overflow: auto; }
   .crm-table { width: 100%; font-size: 13.5px; border-collapse: collapse; min-width: 760px; }
   .crm-table thead tr { border-bottom: 1px solid var(--line); }
@@ -159,7 +179,7 @@ const CSS = `
   .crm-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 999px; background: var(--ink-950); color: #fff; font-size: 13.5px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
   .crm-toast.error { background: var(--red); }
 
-  /* ---------- Confirm-selection step (Attendees add / Lead bulk-create) ---------- */
+  /* ---------- Confirm-selection step (Attendees add / Lead bulk-create / People convert) ---------- */
   .crm-confirm-wrap { border: 1px solid var(--line); background: var(--surface); border-radius: 16px; padding: 20px; }
   .crm-confirm-heading { font-size: 14px; font-weight: 600; color: var(--ink-950); margin: 0 0 4px; }
   .crm-confirm-note { font-size: 12.5px; color: var(--ink-400); margin: 0 0 16px; }
@@ -259,7 +279,7 @@ export default function App() {
     leads: { title: 'Leads', sub: 'Every lead across every channel' },
     events: { title: 'Events', sub: 'Events and who attended them' },
     attendees: { title: 'Attendees', sub: 'Manage who is attached to each event' },
-    create: { title: 'Create', sub: 'Add a new person, lead, or event' },
+    create: { title: 'Create', sub: 'Add a new event, person, or lead' },
   }[activePage]
 
   return (
@@ -341,17 +361,29 @@ function SidebarContent({ collapsed, setCollapsed, activePage, goTo, onCloseMobi
 }
 
 // ============================================================================
-// PEOPLE — live data, search + company filter, single-row edit-lock
+// PEOPLE — live data, search, pagination, single-row edit-lock, and
+// select-multiple -> Convert to Lead (with a review/confirm step before
+// anything is written to the database).
 // ============================================================================
 function PeoplePage({ showToast }) {
   const [people, setPeople] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
+  const [peoplePage, setPeoplePage] = useState(1)
 
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [saving, setSaving] = useState(false)
+
+  // --- Select-and-convert-to-lead ---
+  const [selectedIds, setSelectedIds] = useState(new Set())
+  const [convertStep, setConvertStep] = useState(null) // null | 'form' | 'confirm'
+  const [leadForm, setLeadForm] = useState({
+    lead_purpose: '', lead_status: 'New', nurture_stage: '', owner: '',
+    cold_calling: false, social_media: false, email_campaign: false, notes: '',
+  })
+  const [convertSubmitting, setConvertSubmitting] = useState(false)
 
   const fetchPeople = useCallback(async () => {
     setLoading(true)
@@ -379,6 +411,42 @@ function PeoplePage({ showToast }) {
         .includes(q)
     })
   }, [people, search])
+
+  // Reset to page 1 whenever the search changes so you don't get stranded
+  // on a page that no longer has any matching rows.
+  useEffect(() => { setPeoplePage(1) }, [search])
+
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  const selectAllFiltered = () => setSelectedIds(new Set(filtered.map(p => p.person_id)))
+  const clearSelection = () => setSelectedIds(new Set())
+
+  const setLeadField = (k) => (e) => setLeadForm({ ...leadForm, [k]: e.target.value })
+
+  const submitConvert = async () => {
+    setConvertSubmitting(true)
+    const rows = people
+      .filter(p => selectedIds.has(p.person_id))
+      .map(p => ({
+        person_id: p.person_id,
+        company_id: p.company_id || null,
+        event_id: null, // this flow doesn't scope leads to an event — say if it should
+        ...leadForm,
+      }))
+    const { error } = await supabase.from('leads').insert(rows)
+    setConvertSubmitting(false)
+    if (error) { showToast(`Couldn't create leads: ${error.message}`, true); return }
+    showToast(`${rows.length} ${rows.length === 1 ? 'lead' : 'leads'} created`)
+    setSelectedIds(new Set())
+    setConvertStep(null)
+    setLeadForm({ lead_purpose: '', lead_status: 'New', nurture_stage: '', owner: '', cold_calling: false, social_media: false, email_campaign: false, notes: '' })
+  }
 
   const startEdit = (p) => {
     // Opening a new row for editing discards any unsaved changes on the
@@ -417,12 +485,87 @@ function PeoplePage({ showToast }) {
   return (
     <div>
       <div className="crm-toolbar">
+        {selectedIds.size > 0 && (
+          <button className="crm-toggle-chip on" onClick={() => setConvertStep('form')}>
+            <UserPlus size={13} style={{ marginRight: 4, verticalAlign: -2 }} /> Convert {selectedIds.size} to Lead
+          </button>
+        )}
         <div className="crm-search-box">
           <Search size={15} style={{ color: 'var(--ink-400)' }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, email, company, title, country…" />
         </div>
+        <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({filtered.length})</button>
+        {selectedIds.size > 0 && <button className="crm-toggle-chip" onClick={clearSelection}>Clear selection</button>}
         <span className="crm-count-note">{filtered.length} of {people.length}</span>
       </div>
+
+      {convertStep === 'form' && (
+        <div className="crm-form" style={{ marginBottom: 20 }}>
+          <p className="crm-confirm-note" style={{ margin: 0 }}>
+            These fields apply to all {selectedIds.size} selected {selectedIds.size === 1 ? 'person' : 'people'}. You can still edit any lead individually afterward on the Leads page.
+          </p>
+          <div className="crm-form-row">
+            <div><FieldLabel>Purpose</FieldLabel><input value={leadForm.lead_purpose} onChange={setLeadField('lead_purpose')} className="crm-input" placeholder="e.g. Outreach" /></div>
+            <div>
+              <FieldLabel>Status</FieldLabel>
+              <select value={leadForm.lead_status} onChange={setLeadField('lead_status')} className="crm-select">
+                {LEAD_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="crm-form-row">
+            <div>
+              <FieldLabel>Nurture stage</FieldLabel>
+              <select value={leadForm.nurture_stage} onChange={setLeadField('nurture_stage')} className="crm-select">
+                <option value="">—</option>
+                {NURTURE_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div><FieldLabel>Owner</FieldLabel><input value={leadForm.owner} onChange={setLeadField('owner')} className="crm-input" /></div>
+          </div>
+          <div>
+            <FieldLabel>Outreach channels</FieldLabel>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <label className="crm-checkbox-row"><input type="checkbox" checked={leadForm.cold_calling} onChange={e => setLeadForm({ ...leadForm, cold_calling: e.target.checked })} /> Cold calling</label>
+              <label className="crm-checkbox-row"><input type="checkbox" checked={leadForm.social_media} onChange={e => setLeadForm({ ...leadForm, social_media: e.target.checked })} /> Social / LinkedIn</label>
+              <label className="crm-checkbox-row"><input type="checkbox" checked={leadForm.email_campaign} onChange={e => setLeadForm({ ...leadForm, email_campaign: e.target.checked })} /> Email campaign</label>
+            </div>
+          </div>
+          <div><FieldLabel>Notes (applied to all selected)</FieldLabel><textarea value={leadForm.notes} onChange={setLeadField('notes')} className="crm-textarea" /></div>
+          <div className="crm-confirm-actions">
+            <button className="crm-btn-secondary" onClick={() => setConvertStep(null)}>Cancel</button>
+            <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 20px' }} onClick={() => setConvertStep('confirm')}>
+              Review {selectedIds.size} selected
+            </button>
+          </div>
+        </div>
+      )}
+
+      {convertStep === 'confirm' && (
+        <div style={{ marginBottom: 20 }}>
+          <ConfirmSelectionPanel
+            heading={`Confirm ${selectedIds.size} ${selectedIds.size === 1 ? 'lead' : 'leads'}`}
+            note="These fields will be applied to every person below. Remove anyone who shouldn't become a lead yet."
+            summary={[
+              { label: 'Purpose', value: leadForm.lead_purpose || '—' },
+              { label: 'Status', value: leadForm.lead_status },
+              { label: 'Nurture', value: leadForm.nurture_stage || '—' },
+              { label: 'Owner', value: leadForm.owner || '—' },
+              { label: 'Channels', value: [leadForm.cold_calling && 'Cold call', leadForm.social_media && 'Social', leadForm.email_campaign && 'Email'].filter(Boolean).join(', ') || 'None' },
+            ]}
+            items={people.filter(p => selectedIds.has(p.person_id)).map(p => ({
+              id: p.person_id,
+              primary: `${p.first_name} ${p.last_name}`,
+              secondary: `${p.email}${p.companies?.company_name ? ' · ' + p.companies.company_name : ''}`,
+            }))}
+            onRemove={(id) => toggleSelect(id)}
+            onConfirm={submitConvert}
+            onBack={() => setConvertStep('form')}
+            confirming={convertSubmitting}
+            confirmLabel={`Confirm & create ${selectedIds.size > 0 ? selectedIds.size : ''}`}
+          />
+        </div>
+      )}
 
       {loading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading people…</div>}
       {error && <div className="crm-error">Couldn't load people: {error}</div>}
@@ -432,15 +575,23 @@ function PeoplePage({ showToast }) {
           <table className="crm-table">
             <thead>
               <tr>
-                {['Name', 'Email', 'Job title', 'Company', 'Country', 'Status', ''].map(h => <th key={h}>{h}</th>)}
+                {['', 'Name', 'Email', 'Job title', 'Company', 'Country', 'Status', ''].map(h => <th key={h}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
-              {filtered.map(p => {
+              {paginate(filtered, peoplePage).map(p => {
                 const isEditing = editingId === p.person_id
                 const av = avatarStyle(p.first_name + p.last_name)
                 return (
                   <tr key={p.person_id} className={isEditing ? 'editing' : ''}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(p.person_id)}
+                        onChange={() => toggleSelect(p.person_id)}
+                        aria-label={`Select ${p.first_name} ${p.last_name}`}
+                      />
+                    </td>
                     {isEditing ? (
                       <>
                         <td>
@@ -489,10 +640,11 @@ function PeoplePage({ showToast }) {
                 )
               })}
               {filtered.length === 0 && (
-                <tr className="crm-empty-row"><td colSpan={7}>No one matches that search.</td></tr>
+                <tr className="crm-empty-row"><td colSpan={8}>No one matches that search.</td></tr>
               )}
             </tbody>
           </table>
+          <Pagination page={peoplePage} setPage={setPeoplePage} total={filtered.length} />
         </div>
       )}
     </div>
@@ -510,6 +662,7 @@ function LeadsPage({ showToast }) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [activeOnly, setActiveOnly] = useState(true) // default on, per your call
+  const [leadsPage, setLeadsPage] = useState(1)
 
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
@@ -541,6 +694,8 @@ function LeadsPage({ showToast }) {
       return `${personName} ${companyName} ${l.lead_purpose || ''} ${l.owner || ''}`.toLowerCase().includes(q)
     })
   }, [leads, search, statusFilter, activeOnly])
+
+  useEffect(() => { setLeadsPage(1) }, [search, statusFilter, activeOnly])
 
   const startEdit = (l) => {
     setEditingId(l.lead_id)
@@ -600,7 +755,7 @@ function LeadsPage({ showToast }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(l => {
+              {paginate(filtered, leadsPage).map(l => {
                 const isEditing = editingId === l.lead_id
                 const personName = `${l.people?.first_name || ''} ${l.people?.last_name || ''}`.trim() || '—'
                 return (
@@ -659,6 +814,7 @@ function LeadsPage({ showToast }) {
               )}
             </tbody>
           </table>
+          <Pagination page={leadsPage} setPage={setLeadsPage} total={filtered.length} />
         </div>
       )}
     </div>
@@ -674,6 +830,7 @@ function EventsPage({ showToast }) {
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [eventsPage, setEventsPage] = useState(1)
 
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
@@ -698,6 +855,8 @@ function EventsPage({ showToast }) {
       return `${e.event_name} ${e.event_type || ''} ${e.location || ''} ${e.country || ''}`.toLowerCase().includes(q)
     })
   }, [events, search, statusFilter])
+
+  useEffect(() => { setEventsPage(1) }, [search, statusFilter])
 
   const startEdit = (e) => {
     setEditingId(e.event_id)
@@ -748,7 +907,7 @@ function EventsPage({ showToast }) {
               <tr>{['Event', 'Type', 'Dates', 'Location', 'Country', 'Status', ''].map(h => <th key={h}>{h}</th>)}</tr>
             </thead>
             <tbody>
-              {filtered.map(e => {
+              {paginate(filtered, eventsPage).map(e => {
                 const isEditing = editingId === e.event_id
                 return (
                   <tr key={e.event_id} className={isEditing ? 'editing' : ''}>
@@ -796,6 +955,7 @@ function EventsPage({ showToast }) {
               {filtered.length === 0 && <tr className="crm-empty-row"><td colSpan={7}>No events match these filters.</td></tr>}
             </tbody>
           </table>
+          <Pagination page={eventsPage} setPage={setEventsPage} total={filtered.length} />
         </div>
       )}
     </div>
@@ -805,7 +965,8 @@ function EventsPage({ showToast }) {
 // ============================================================================
 // ATTENDEES — pick an event, manage who's already attached to it (edit-lock,
 // removable), and add more people via search/filter with multi-select
-// (select-all-filtered or one-by-one, deselect before submitting).
+// (select-all-filtered or one-by-one, deselect before submitting, confirm
+// step before anything is written).
 // ============================================================================
 function AttendeesPage({ showToast }) {
   const [events, setEvents] = useState([])
@@ -824,6 +985,7 @@ function AttendeesPage({ showToast }) {
   const [candidates, setCandidates] = useState([])
   const [candidatesLoading, setCandidatesLoading] = useState(false)
   const [candidateSearch, setCandidateSearch] = useState('')
+  const [candidatePage, setCandidatePage] = useState(1)
   const [selectedPersonIds, setSelectedPersonIds] = useState(new Set())
   const [bulkRole, setBulkRole] = useState('Attendee')
   const [bulkStatus, setBulkStatus] = useState('Invited')
@@ -860,13 +1022,15 @@ function AttendeesPage({ showToast }) {
   useEffect(() => {
     setSelectedPersonIds(new Set())
     setAddStep('select')
+    setCandidatePage(1)
     if (selectedEventId) fetchParticipants(selectedEventId)
   }, [selectedEventId, fetchParticipants])
 
   // Candidate people = anyone not already a participant on this event.
   useEffect(() => {
     if (!selectedEventId) return
-    (async () => {
+    setCandidatePage(1)
+    ;(async () => {
       setCandidatesLoading(true)
       const existingIds = new Set(participants.map(p => p.person_id))
       let query = supabase.from('people').select('person_id, first_name, last_name, email, job_title, country, company_id, companies(company_name)').limit(200)
@@ -1031,6 +1195,11 @@ function AttendeesPage({ showToast }) {
           ) : (
             <>
               <div className="crm-toolbar">
+                {selectedPersonIds.size > 0 && (
+                  <button className="crm-toggle-chip on" onClick={() => setAddStep('confirm')}>
+                    <UserCheck size={13} style={{ marginRight: 4, verticalAlign: -2 }} /> Add {selectedPersonIds.size} to event
+                  </button>
+                )}
                 <div className="crm-search-box">
                   <Search size={15} style={{ color: 'var(--ink-400)' }} />
                   <input value={candidateSearch} onChange={e => setCandidateSearch(e.target.value)} placeholder="Filter by name or email…" />
@@ -1052,7 +1221,7 @@ function AttendeesPage({ showToast }) {
                   <table className="crm-table">
                     <thead><tr>{['', 'Name', 'Email', 'Job title', 'Company', 'Country'].map(h => <th key={h}>{h}</th>)}</tr></thead>
                     <tbody>
-                      {candidates.map(c => (
+                      {paginate(candidates, candidatePage).map(c => (
                         <tr key={c.person_id} onClick={() => togglePerson(c.person_id)} style={{ cursor: 'pointer' }}>
                           <td><input type="checkbox" checked={selectedPersonIds.has(c.person_id)} onChange={() => togglePerson(c.person_id)} onClick={e => e.stopPropagation()} /></td>
                           <td>{c.first_name} {c.last_name}</td>
@@ -1065,12 +1234,9 @@ function AttendeesPage({ showToast }) {
                       {candidates.length === 0 && <tr className="crm-empty-row"><td colSpan={6}>Everyone matching this filter is already on the event.</td></tr>}
                     </tbody>
                   </table>
+                  <Pagination page={candidatePage} setPage={setCandidatePage} total={candidates.length} />
                 </div>
               )}
-
-              <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 20px' }} onClick={() => setAddStep('confirm')} disabled={selectedPersonIds.size === 0}>
-                <UserCheck size={15} /> Review {selectedPersonIds.size > 0 ? selectedPersonIds.size : ''} selected
-              </button>
             </>
           )}
         </div>
@@ -1080,22 +1246,23 @@ function AttendeesPage({ showToast }) {
 }
 
 // ============================================================================
-// CREATE — Person / Lead / Event forms matching the real schema.
-// Company and Person pickers are inline search-and-select against Supabase
-// rather than free-typed IDs.
+// CREATE — Event / Person / Lead forms matching the real schema.
+// Event is first since that's usually the starting point of a campaign.
+// Company is inline search-and-select against Supabase rather than a
+// free-typed ID; Lead creation is filter + multi-select, not a manual form.
 // ============================================================================
 function CreatePage({ showToast }) {
-  const [tab, setTab] = useState('person')
+  const [tab, setTab] = useState('event')
   return (
     <div className={tab === 'lead' ? '' : 'crm-create-wrap'}>
       <div className="crm-tabs">
-        {[{ k: 'person', l: 'Person' }, { k: 'lead', l: 'Lead' }, { k: 'event', l: 'Event' }].map(t => (
+        {[{ k: 'event', l: 'Event' }, { k: 'person', l: 'Person' }, { k: 'lead', l: 'Lead' }].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)} className={`crm-tab-btn${tab === t.k ? ' active' : ''}`}>{t.l}</button>
         ))}
       </div>
+      {tab === 'event' && <EventForm showToast={showToast} />}
       {tab === 'person' && <PersonForm showToast={showToast} />}
       {tab === 'lead' && <LeadBulkCreate showToast={showToast} />}
-      {tab === 'event' && <EventForm showToast={showToast} />}
     </div>
   )
 }
@@ -1144,7 +1311,6 @@ function CompanyPicker({ value, onChange }) {
     </div>
   )
 }
-
 
 function PersonForm({ showToast }) {
   const [form, setForm] = useState({ first_name: '', last_name: '', email: '', job_title: '', country: '', phone: '', mobile: '', linkedin_url: '' })
@@ -1195,6 +1361,7 @@ function LeadBulkCreate({ showToast }) {
   const [candidates, setCandidates] = useState([])
   const [candidatesLoading, setCandidatesLoading] = useState(false)
   const [search, setSearch] = useState('')
+  const [candidatePage, setCandidatePage] = useState(1)
   const [selectedPersonIds, setSelectedPersonIds] = useState(new Set())
   const [step, setStep] = useState('select') // 'select' | 'confirm'
   const [submitting, setSubmitting] = useState(false)
@@ -1206,7 +1373,8 @@ function LeadBulkCreate({ showToast }) {
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
   useEffect(() => {
-    (async () => {
+    setCandidatePage(1)
+    ;(async () => {
       setCandidatesLoading(true)
       let query = supabase.from('people').select('person_id, first_name, last_name, email, job_title, country, company_id, companies(company_name)').limit(200)
       if (search.trim()) {
@@ -1309,6 +1477,11 @@ function LeadBulkCreate({ showToast }) {
       </div>
 
       <div className="crm-toolbar">
+        {selectedPersonIds.size > 0 && (
+          <button className="crm-toggle-chip on" onClick={() => setStep('confirm')}>
+            <Target size={13} style={{ marginRight: 4, verticalAlign: -2 }} /> Review {selectedPersonIds.size} selected
+          </button>
+        )}
         <div className="crm-search-box">
           <Search size={15} style={{ color: 'var(--ink-400)' }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter people by name or email…" />
@@ -1324,7 +1497,7 @@ function LeadBulkCreate({ showToast }) {
           <table className="crm-table">
             <thead><tr>{['', 'Name', 'Email', 'Job title', 'Company', 'Country'].map(h => <th key={h}>{h}</th>)}</tr></thead>
             <tbody>
-              {candidates.map(c => (
+              {paginate(candidates, candidatePage).map(c => (
                 <tr key={c.person_id} onClick={() => togglePerson(c.person_id)} style={{ cursor: 'pointer' }}>
                   <td><input type="checkbox" checked={selectedPersonIds.has(c.person_id)} onChange={() => togglePerson(c.person_id)} onClick={e => e.stopPropagation()} /></td>
                   <td>{c.first_name} {c.last_name}</td>
@@ -1337,12 +1510,9 @@ function LeadBulkCreate({ showToast }) {
               {candidates.length === 0 && <tr className="crm-empty-row"><td colSpan={6}>No one matches this filter.</td></tr>}
             </tbody>
           </table>
+          <Pagination page={candidatePage} setPage={setCandidatePage} total={candidates.length} />
         </div>
       )}
-
-      <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 20px' }} onClick={() => setStep('confirm')} disabled={selectedPersonIds.size === 0}>
-        <Target size={15} /> Review {selectedPersonIds.size > 0 ? selectedPersonIds.size : ''} selected
-      </button>
     </div>
   )
 }
