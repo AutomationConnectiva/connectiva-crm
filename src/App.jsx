@@ -10,8 +10,8 @@ import {
 // Fixed pick-lists. These are UI constants (dropdown options), not fake rows —
 // swap the arrays' contents to match your real values whenever you confirm them.
 // ---------------------------------------------------------------------------
-const LEAD_STATUS_OPTIONS = ['New', 'Contacted', 'Qualified', 'Won', 'Lost']
-const NURTURE_STAGE_OPTIONS = ['Cold', 'Warming', 'Hot', 'Stalled']
+const LEAD_STATUS_OPTIONS = ['New', 'Contacted', 'Unsubcribed']
+const NURTURE_STAGE_OPTIONS = ['Cold', 'Warming','Outreach']
 const CHANNEL_STAGE_OPTIONS = ['Not started', 'In progress', 'Responded', 'Converted']
 const EVENT_STATUS_OPTIONS = ['Planned', 'Active', 'Completed', 'Cancelled']
 const PARTICIPANT_ROLE_OPTIONS = ['Attendee', 'Speaker', 'Sponsor', 'Organizer']
@@ -46,7 +46,6 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-// Shared pagination helper — 15 rows per page everywhere it's used.
 const PAGE_SIZE = 15
 function paginate(items, page) {
   const start = (page - 1) * PAGE_SIZE
