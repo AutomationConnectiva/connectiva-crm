@@ -10,7 +10,7 @@ import {
 // Fixed pick-lists. These are UI constants (dropdown options), not fake rows —
 // swap the arrays' contents to match your real values whenever you confirm them.
 // ---------------------------------------------------------------------------
-const LEAD_STATUS_OPTIONS = ['New', 'Contacted', 'Unsubcribed']
+const LEAD_STATUS_OPTIONS = ['New', 'Contacted', 'Unsubscribed']
 const NURTURE_STAGE_OPTIONS = ['Cold', 'Warming','Outreach']
 const CHANNEL_STAGE_OPTIONS = ['Not started', 'In progress', 'Responded', 'Converted']
 const EVENT_STATUS_OPTIONS = ['Planned', 'Active', 'Completed', 'Cancelled']
@@ -213,9 +213,16 @@ const CSS = `
 // ---------------------------------------------------------------------------
 function badgeTone(value) {
   const v = (value || '').toLowerCase()
-  if (['won', 'converted', 'confirmed', 'attended', 'active', 'completed'].includes(v)) return { bg: 'var(--accent-soft)', fg: 'var(--accent-ink)' }
-  if (['lost', 'cancelled', 'stalled'].includes(v)) return { bg: 'var(--red-soft)', fg: 'var(--red)' }
-  if (['new', 'planned', 'invited', 'not started'].includes(v)) return { bg: 'var(--line)', fg: 'var(--ink-700)' }
+
+  if (['contacted', 'warming', 'outreach'].includes(v))
+    return { bg: 'var(--accent-soft)', fg: 'var(--accent-ink)' }
+
+  if (['unsubscribed'].includes(v))
+    return { bg: 'var(--red-soft)', fg: 'var(--red)' }
+
+  if (['new', 'cold'].includes(v))
+    return { bg: 'var(--line)', fg: 'var(--ink-700)' }
+
   return { bg: 'var(--amber-soft)', fg: 'var(--amber)' }
 }
 function Badge({ value }) {
@@ -590,7 +597,7 @@ function LeadsPage({ showToast }) {
     return leads.filter(l => {
       if (statusFilter && l.lead_status !== statusFilter) return false
       // "Active" = not Won and not Lost. Flag if this definition should differ.
-      if (activeOnly && ['Won', 'Lost'].includes(l.lead_status)) return false
+      if (activeOnly && l.lead_status === 'Unsubscribed') return false
       if (!q) return true
       const personName = `${l.people?.first_name || ''} ${l.people?.last_name || ''}`
       const companyName = l.companies?.company_name || ''
