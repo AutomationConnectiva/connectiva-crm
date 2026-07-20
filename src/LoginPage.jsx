@@ -66,10 +66,6 @@ export default function LoginPage() {
       <style>{CSS}</style>
       <div>
         <div className="login-card">
-          <div className="login-logo">
-            <div className="login-logo-dot" />
-            <span className="login-logo-text">Connectiva<span>CRM</span></span>
-          </div>
           <h1 className="login-title">Welcome back</h1>
           <p className="login-sub">Sign in with your team credentials to continue.</p>
 
@@ -117,7 +113,7 @@ export default function LoginPage() {
             </button>
           </form>
         </div>
-        <p className="login-foot">© 2024 ConnectivaCRM · Internal access only</p>
+        <p className="login-foot">© 2026 ConnectivaCRM · Internal access only</p>
       </div>
     </div>
   )
