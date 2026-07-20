@@ -77,6 +77,7 @@ const CSS = `
     --accent: #0E6F5C; --accent-soft: #E3EFEA; --accent-ink: #0B5647;
     --amber: #B8862E; --amber-soft: #F3E9D6;
     --red: #B23A3A; --red-soft: #F5E3E1;
+    --navy: #081026; --navy-2: #0C1530;
     font-family: Inter, ui-sans-serif, system-ui, sans-serif;
     background: var(--paper); color: var(--ink-900);
     height: 100vh; width: 100%; display: flex; overflow: hidden; box-sizing: border-box;
@@ -84,7 +85,7 @@ const CSS = `
   .crm-root *, .crm-root *::before, .crm-root *::after { box-sizing: border-box; }
   .crm-display { font-family: 'Fraunces', serif; }
 
-  .crm-sidebar { display: none; flex-direction: column; flex-shrink: 0; background: var(--ink-950); width: 248px; transition: width .2s ease; }
+  .crm-sidebar { display: none; flex-direction: column; flex-shrink: 0; background: var(--navy); width: 248px; transition: width .2s ease; }
   .crm-sidebar.collapsed { width: 76px; }
   @media (min-width: 860px) { .crm-sidebar { display: flex; } }
   .crm-sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: 24px 20px; }
@@ -103,7 +104,7 @@ const CSS = `
   .crm-drawer-overlay { display: none; position: fixed; inset: 0; z-index: 40; }
   .crm-drawer-overlay.open { display: flex; }
   .crm-drawer-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.4); }
-  .crm-drawer-panel { position: relative; width: 240px; display: flex; flex-direction: column; background: var(--ink-950); }
+  .crm-drawer-panel { position: relative; width: 240px; display: flex; flex-direction: column; background: var(--navy); }
   @media (min-width: 860px) { .crm-drawer-overlay { display: none !important; } }
 
   .crm-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -164,19 +165,19 @@ const CSS = `
   .crm-create-wrap { max-width: 560px; }
   .crm-tabs { display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); margin-bottom: 24px; }
   .crm-tab-btn { padding: 7px 16px; border-radius: 999px; border: none; font-size: 13.5px; font-weight: 500; background: transparent; color: var(--ink-700); cursor: pointer; }
-  .crm-tab-btn.active { background: var(--ink-950); color: #F4F3EF; }
+  .crm-tab-btn.active { background: var(--navy); color: #F4F3EF; }
   .crm-form { display: flex; flex-direction: column; gap: 16px; border: 1px solid var(--line); background: var(--surface); border-radius: 16px; padding: 24px; }
   .crm-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .crm-field-label { display: block; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-400); margin-bottom: 6px; }
   .crm-input, .crm-select, .crm-textarea { width: 100%; padding: 10px 14px; border-radius: 10px; font-size: 13.5px; outline: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink-900); font-family: inherit; }
   .crm-textarea { resize: vertical; min-height: 70px; }
   .crm-input:focus, .crm-select:focus, .crm-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-  .crm-submit-btn { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 11px; border-radius: 10px; border: none; font-size: 13.5px; font-weight: 500; background: var(--ink-950); color: #fff; cursor: pointer; }
-  .crm-submit-btn:hover { filter: brightness(1.1); }
+  .crm-submit-btn { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 11px; border-radius: 10px; border: none; font-size: 13.5px; font-weight: 500; background: var(--navy); color: #fff; cursor: pointer; }
+  .crm-submit-btn:hover { filter: brightness(1.3); }
   .crm-submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .crm-checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink-700); }
 
-  .crm-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 999px; background: var(--ink-950); color: #fff; font-size: 13.5px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
+  .crm-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 999px; background: var(--navy); color: #fff; font-size: 13.5px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
   .crm-toast.error { background: var(--red); }
 
   /* ---------- Confirm-selection step (Attendees add / Lead bulk-create / People convert) ---------- */
@@ -197,6 +198,14 @@ const CSS = `
   .crm-remove-x { width: 26px; height: 26px; border-radius: 7px; border: none; background: transparent; color: var(--ink-400); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
   .crm-remove-x:hover { background: var(--red-soft); color: var(--red); }
   .crm-confirm-empty { padding: 30px; text-align: center; color: var(--ink-400); font-size: 13.5px; }
+
+  /* ---------- Sticky selection bar — shown the moment people are picked, ---------- */
+  /* ---------- pinned to the top of the scroll area so it's always visible. ---------- */
+  .crm-selection-bar { position: sticky; top: 0; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-radius: 12px; background: var(--accent-soft); border: 1px solid var(--accent); margin-bottom: 14px; box-shadow: 0 4px 14px rgba(14,111,92,0.12); }
+  .crm-selection-bar-count { font-size: 13.5px; font-weight: 600; color: var(--accent-ink); }
+  .crm-selection-bar-actions { display: flex; align-items: center; gap: 8px; }
+  .crm-selection-confirm-btn { display: flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: 10px; border: none; font-size: 13.5px; font-weight: 600; background: var(--accent-ink); color: #fff; cursor: pointer; }
+  .crm-selection-confirm-btn:hover { filter: brightness(1.1); }
 `
 
 // ---------------------------------------------------------------------------
@@ -214,6 +223,23 @@ function Badge({ value }) {
   if (!value) return <span style={{ color: 'var(--ink-400)' }}>—</span>
   const tone = badgeTone(value)
   return <span className="crm-badge" style={{ background: tone.bg, color: tone.fg }}>{value}</span>
+}
+
+// Sticky bar that appears the instant one or more rows are selected, pinned
+// to the top of the scroll area, so the "review & confirm" action never
+// requires scrolling past the candidate table to find it.
+function SelectionBar({ count, noun = 'selected', label, onConfirm }) {
+  if (count === 0) return null
+  return (
+    <div className="crm-selection-bar">
+      <span className="crm-selection-bar-count">{count} {noun}</span>
+      <div className="crm-selection-bar-actions">
+        <button className="crm-selection-confirm-btn" onClick={onConfirm}>
+          <Check size={15} /> {label}
+        </button>
+      </div>
+    </div>
+  )
 }
 
 // Shared review step: show exactly who's about to be affected and the bulk
@@ -840,9 +866,10 @@ function EventsPage({ showToast }) {
 
 // ============================================================================
 // ATTENDEES — pick an event, manage who's already attached to it (edit-lock,
-// removable), and add more people via search/filter with multi-select
-// (select-all-filtered or one-by-one, deselect before submitting, confirm
-// step before anything is written).
+// removable, paginated), and add more people via search/filter with
+// multi-select (select-all-filtered or one-by-one, deselect before
+// submitting, a sticky confirm bar the moment anyone is selected, and a
+// confirm step before anything is written).
 // ============================================================================
 function AttendeesPage({ showToast }) {
   const [events, setEvents] = useState([])
@@ -851,6 +878,7 @@ function AttendeesPage({ showToast }) {
 
   const [participants, setParticipants] = useState([])
   const [participantsLoading, setParticipantsLoading] = useState(false)
+  const [participantsPage, setParticipantsPage] = useState(1)
 
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
@@ -899,6 +927,7 @@ function AttendeesPage({ showToast }) {
     setSelectedPersonIds(new Set())
     setAddStep('select')
     setCandidatePage(1)
+    setParticipantsPage(1)
     if (selectedEventId) fetchParticipants(selectedEventId)
   }, [selectedEventId, fetchParticipants])
 
@@ -988,14 +1017,14 @@ function AttendeesPage({ showToast }) {
         <span className="crm-count-note">{participants.length} attached to this event</span>
       </div>
 
-      {/* Current participants */}
+      {/* Current participants — paginated so a big event doesn't turn into an endless scroll */}
       {participantsLoading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading attendees…</div>}
       {!participantsLoading && selectedEventId && (
         <div className="crm-table-wrap" style={{ marginBottom: 28 }}>
           <table className="crm-table">
             <thead><tr>{['Name', 'Email', 'Company', 'Role', 'Status', ''].map(h => <th key={h}>{h}</th>)}</tr></thead>
             <tbody>
-              {participants.map(p => {
+              {paginate(participants, participantsPage).map(p => {
                 const isEditing = editingId === p.participant_id
                 const name = `${p.people?.first_name || ''} ${p.people?.last_name || ''}`.trim() || '—'
                 return (
@@ -1044,6 +1073,7 @@ function AttendeesPage({ showToast }) {
               {participants.length === 0 && <tr className="crm-empty-row"><td colSpan={6}>No one's attached to this event yet — add people below.</td></tr>}
             </tbody>
           </table>
+          <Pagination page={participantsPage} setPage={setParticipantsPage} total={participants.length} />
         </div>
       )}
 
@@ -1070,12 +1100,17 @@ function AttendeesPage({ showToast }) {
             />
           ) : (
             <>
+              {/* Sticky bar — appears the moment anyone is checked, stays pinned
+                  to the top of the scroll area so it's visible without scrolling
+                  down to the bottom of the candidate list. */}
+              <SelectionBar
+                count={selectedPersonIds.size}
+                noun="selected"
+                label={`Review & add ${selectedPersonIds.size}`}
+                onConfirm={() => setAddStep('confirm')}
+              />
+
               <div className="crm-toolbar">
-                {selectedPersonIds.size > 0 && (
-                  <button className="crm-toggle-chip on" onClick={() => setAddStep('confirm')}>
-                    <UserCheck size={13} style={{ marginRight: 4, verticalAlign: -2 }} /> Add {selectedPersonIds.size} to event
-                  </button>
-                )}
                 <div className="crm-search-box">
                   <Search size={15} style={{ color: 'var(--ink-400)' }} />
                   <input value={candidateSearch} onChange={e => setCandidateSearch(e.target.value)} placeholder="Filter by name or email…" />
@@ -1232,7 +1267,8 @@ function PersonForm({ showToast }) {
 
 // Same interaction pattern as Attendees: filter/search people, multi-select
 // (checkboxes, select-all-filtered, clear), set the shared lead fields once,
-// review exactly who's selected, then one bulk insert into `leads`.
+// a sticky confirm bar the moment anyone is selected, review exactly who's
+// selected, then one bulk insert into `leads`.
 function LeadBulkCreate({ showToast }) {
   const [candidates, setCandidates] = useState([])
   const [candidatesLoading, setCandidatesLoading] = useState(false)
@@ -1321,6 +1357,15 @@ function LeadBulkCreate({ showToast }) {
 
   return (
     <div>
+      {/* Sticky bar — appears the instant anyone is checked below, pinned to
+          the top so you never have to scroll down to submit. */}
+      <SelectionBar
+        count={selectedPersonIds.size}
+        noun="selected"
+        label={`Review & create ${selectedPersonIds.size}`}
+        onConfirm={() => setStep('confirm')}
+      />
+
       <div className="crm-form" style={{ marginBottom: 20 }}>
         <div className="crm-form-row">
           <div><FieldLabel>Purpose</FieldLabel><input value={form.lead_purpose} onChange={set('lead_purpose')} className="crm-input" placeholder="e.g. Outreach" /></div>
@@ -1353,11 +1398,6 @@ function LeadBulkCreate({ showToast }) {
       </div>
 
       <div className="crm-toolbar">
-        {selectedPersonIds.size > 0 && (
-          <button className="crm-toggle-chip on" onClick={() => setStep('confirm')}>
-            <Target size={13} style={{ marginRight: 4, verticalAlign: -2 }} /> Review {selectedPersonIds.size} selected
-          </button>
-        )}
         <div className="crm-search-box">
           <Search size={15} style={{ color: 'var(--ink-400)' }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter people by name or email…" />
