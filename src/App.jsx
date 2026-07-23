@@ -3,7 +3,7 @@ import { supabase } from './lib/supabase'
 import {
   Users, UserPlus, Calendar, Target, Menu, X, Search,
   Clock, Check, Save, XCircle, Loader2,
-  UserCheck, Trash2, LogOut, ArrowLeft, Eye, Pencil
+  UserCheck, Trash2, LogOut, ArrowLeft, Eye, Pencil, ChevronDown, ChevronUp
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -626,8 +626,7 @@ function PeoplePage({ showToast, onOpenPerson }) {
       return next
     })
   }
-  const eligible = useMemo(() => filtered.filter(p => !leadPersonIds.has(p.person_id)), [filtered, leadPersonIds])
-  const selectAllFiltered = () => setSelectedPersonIds(new Set(eligible.map(p => p.person_id)))
+  const selectAllFiltered = () => setSelectedPersonIds(new Set(filtered.map(p => p.person_id)))
   const clearSelection = () => setSelectedPersonIds(new Set())
 
   const submitConvert = async () => {
@@ -703,7 +702,7 @@ function PeoplePage({ showToast, onOpenPerson }) {
 
         {selecting ? (
           <>
-            <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all eligible ({eligible.length})</button>
+            <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({filtered.length})</button>
             {selectedPersonIds.size > 0 && <button className="crm-toggle-chip" onClick={clearSelection}>Clear selection</button>}
             <button className="crm-btn-secondary" onClick={cancelConvert}>Cancel</button>
           </>
@@ -768,14 +767,13 @@ function PeoplePage({ showToast, onOpenPerson }) {
                   <tr
                     key={p.person_id}
                     className="clickable"
-                    onClick={() => (selecting ? (!alreadyLead && togglePerson(p.person_id)) : onOpenPerson(p.person_id))}
+                    onClick={() => (selecting ? togglePerson(p.person_id) : onOpenPerson(p.person_id))}
                   >
                     {selecting && (
                       <td>
                         <input
                           type="checkbox"
                           checked={selectedPersonIds.has(p.person_id)}
-                          disabled={alreadyLead}
                           onChange={() => togglePerson(p.person_id)}
                           onClick={e => e.stopPropagation()}
                         />
@@ -935,6 +933,12 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
   const [leads, setLeads] = useState([])
   const [leadsLoading, setLeadsLoading] = useState(true)
 
+  // Events this specific person is attached to (event_participants rows),
+  // shown as a collapsible section alongside their leads.
+  const [events, setEvents] = useState([])
+  const [eventsLoading, setEventsLoading] = useState(true)
+  const [showEvents, setShowEvents] = useState(false)
+
   const [showConvert, setShowConvert] = useState(false)
   const [creatingLead, setCreatingLead] = useState(false)
 
@@ -970,7 +974,18 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
     setLeadsLoading(false)
   }, [personId])
 
-  useEffect(() => { load(); loadLeads() }, [load, loadLeads])
+  const loadEvents = useCallback(async () => {
+    setEventsLoading(true)
+    const { data, error } = await supabase
+      .from('event_participants')
+      .select('participant_id, role, status, events(event_id, event_name, start_date)')
+      .eq('person_id', personId)
+      .order('created_at', { ascending: false })
+    if (!error) setEvents(data || [])
+    setEventsLoading(false)
+  }, [personId])
+
+  useEffect(() => { load(); loadLeads(); loadEvents() }, [load, loadLeads, loadEvents])
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
@@ -1069,6 +1084,38 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
             </div>
           </div>
         ))}
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <button
+          onClick={() => setShowEvents(v => !v)}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+        >
+          <h3 className="crm-display" style={{ fontSize: 17, margin: 0 }}>
+            Events attending{!eventsLoading && ` (${events.length})`}
+          </h3>
+          {showEvents ? <ChevronUp size={16} color="var(--ink-400)" /> : <ChevronDown size={16} color="var(--ink-400)" />}
+        </button>
+        {showEvents && (
+          <div style={{ marginTop: 12 }}>
+            {eventsLoading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading events…</div>}
+            {!eventsLoading && events.length === 0 && (
+              <div className="crm-confirm-empty" style={{ border: '1px solid var(--line)', borderRadius: 12 }}>Not attached to any events yet.</div>
+            )}
+            {!eventsLoading && events.map(ev => (
+              <div key={ev.participant_id} className="crm-confirm-row" style={{ border: '1px solid var(--line)', borderRadius: 10, marginBottom: 8 }}>
+                <div>
+                  <div className="crm-confirm-row-name">{ev.events?.event_name || 'Untitled event'}</div>
+                  <div className="crm-confirm-row-sub">{formatDate(ev.events?.start_date)}</div>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <Badge value={ev.role} />
+                  <Badge value={ev.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {showConvert && (
