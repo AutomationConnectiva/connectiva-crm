@@ -2,8 +2,8 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import { supabase } from './lib/supabase'
 import {
   Users, UserPlus, Calendar, Target, Menu, X, Search,
-  Building2, Clock, Check, Pencil, Save, XCircle, Loader2,
-  UserCheck, Trash2, LogOut
+  Clock, Check, Save, XCircle, Loader2,
+  UserCheck, Trash2, LogOut, ArrowLeft, Eye
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -11,11 +11,26 @@ import {
 // swap the arrays' contents to match your real values whenever you confirm them.
 // ---------------------------------------------------------------------------
 const LEAD_STATUS_OPTIONS = ['New', 'Contacted', 'Unsubscribed']
-const NURTURE_STAGE_OPTIONS = ['Cold', 'Warming','Outreach']
+const NURTURE_STAGE_OPTIONS = ['Cold', 'Warming', 'Outreach']
 const CHANNEL_STAGE_OPTIONS = ['Not started', 'In progress', 'Responded', 'Converted']
 const EVENT_STATUS_OPTIONS = ['Planned', 'Active', 'Completed', 'Cancelled']
 const PARTICIPANT_ROLE_OPTIONS = ['Attendee', 'Speaker', 'Sponsor', 'Organizer']
 const PARTICIPANT_STATUS_OPTIONS = ['Invited', 'Confirmed', 'Attended', 'Cancelled']
+
+// NOTE ON SCHEMA CHANGE: this refactor replaces the three boolean columns
+// (cold_calling, social_media, email_campaign) on `leads` with three text
+// columns holding one of CHANNEL_STAGE_OPTIONS each. If your Supabase table
+// still has the old booleans, add these columns (type text, default
+// 'Not started') before wiring this up, e.g.:
+//   alter table leads add column cold_calling_stage text default 'Not started';
+//   alter table leads add column email_campaign_stage text default 'Not started';
+//   alter table leads add column social_media_stage text default 'Not started';
+const CHANNEL_FIELDS = [
+  { key: 'cold_calling_stage', label: 'Cold calling' },
+  { key: 'email_campaign_stage', label: 'Email' },
+  { key: 'social_media_stage', label: 'Social / LinkedIn' },
+]
+const DEFAULT_CHANNEL_STAGES = CHANNEL_FIELDS.reduce((acc, cf) => ({ ...acc, [cf.key]: 'Not started' }), {})
 
 const NAV_ITEMS = [
   { key: 'people', label: 'People', icon: Users },
@@ -112,6 +127,8 @@ const CSS = `
   .crm-header-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .crm-mobile-menu-btn { display: flex; flex-shrink: 0; width: 36px; height: 36px; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; }
   @media (min-width: 860px) { .crm-mobile-menu-btn { display: none; } }
+  .crm-back-btn { display: flex; flex-shrink: 0; width: 36px; height: 36px; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; color: var(--ink-700); }
+  .crm-back-btn:hover { background: var(--paper); }
   .crm-page-title { font-size: 24px; line-height: 1.2; color: var(--ink-950); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   @media (min-width: 860px) { .crm-page-title { font-size: 28px; } }
   .crm-page-sub { font-size: 13px; color: var(--ink-400); margin: 2px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -140,6 +157,7 @@ const CSS = `
   .crm-table td { padding: 10px 18px; border-bottom: 1px solid var(--line); color: var(--ink-700); vertical-align: middle; }
   .crm-table tbody tr:hover td { background: #FAFAF8; }
   .crm-table tbody tr.editing td { background: var(--accent-soft); }
+  .crm-table tbody tr.clickable { cursor: pointer; }
   .crm-table tbody tr:last-child td { border-bottom: none; }
   .crm-name-cell { display: flex; align-items: center; gap: 10px; font-weight: 500; color: var(--ink-950); }
   .crm-empty-row td { text-align: center; padding: 40px 24px; color: var(--ink-400); }
@@ -154,6 +172,7 @@ const CSS = `
   .crm-icon-action.save { color: var(--accent-ink); border-color: var(--accent); }
   .crm-icon-action.cancel { color: var(--red); }
   .crm-badge { font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+  .crm-lead-tag { font-size: 10.5px; font-weight: 600; color: var(--accent-ink); background: var(--accent-soft); padding: 2px 8px; border-radius: 999px; margin-left: 8px; }
 
   .crm-spin { animation: crm-spin-kf 0.8s linear infinite; }
   @keyframes crm-spin-kf { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -179,7 +198,7 @@ const CSS = `
   .crm-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 999px; background: var(--navy); color: #fff; font-size: 13.5px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
   .crm-toast.error { background: var(--red); }
 
-  /* ---------- Confirm-selection step (Attendees add / Lead bulk-create / People convert) ---------- */
+  /* ---------- Confirm-selection step (Attendees add / Lead bulk-create) ---------- */
   .crm-confirm-wrap { border: 1px solid var(--line); background: var(--surface); border-radius: 16px; padding: 20px; }
   .crm-confirm-heading { font-size: 14px; font-weight: 600; color: var(--ink-950); margin: 0 0 4px; }
   .crm-confirm-note { font-size: 12.5px; color: var(--ink-400); margin: 0 0 16px; }
@@ -198,13 +217,21 @@ const CSS = `
   .crm-remove-x:hover { background: var(--red-soft); color: var(--red); }
   .crm-confirm-empty { padding: 30px; text-align: center; color: var(--ink-400); font-size: 13.5px; }
 
-  /* ---------- Sticky selection bar — shown the moment people are picked, ---------- */
-  /* ---------- pinned to the top of the scroll area so it's always visible. ---------- */
   .crm-selection-bar { position: sticky; top: 0; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-radius: 12px; background: var(--accent-soft); border: 1px solid var(--accent); margin-bottom: 14px; box-shadow: 0 4px 14px rgba(14,111,92,0.12); }
   .crm-selection-bar-count { font-size: 13.5px; font-weight: 600; color: var(--accent-ink); }
   .crm-selection-bar-actions { display: flex; align-items: center; gap: 8px; }
   .crm-selection-confirm-btn { display: flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: 10px; border: none; font-size: 13.5px; font-weight: 600; background: var(--accent-ink); color: #fff; cursor: pointer; }
   .crm-selection-confirm-btn:hover { filter: brightness(1.1); }
+
+  /* ---------- Detail pages (Person / Lead) ---------- */
+  .crm-detail-wrap { max-width: 720px; }
+  .crm-detail-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 4px; }
+  .crm-channel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+
+  /* ---------- Quick convert-to-lead modal ---------- */
+  .crm-modal-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .crm-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+  .crm-modal-card { position: relative; background: var(--surface); border-radius: 16px; padding: 24px; width: 100%; max-width: 480px; max-height: 88vh; overflow: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.28); }
 `
 
 // ---------------------------------------------------------------------------
@@ -214,13 +241,16 @@ const CSS = `
 function badgeTone(value) {
   const v = (value || '').toLowerCase()
 
-  if (['contacted', 'warming', 'outreach'].includes(v))
+  if (v === 'converted')
+    return { bg: 'var(--accent-ink)', fg: '#fff' }
+
+  if (['contacted', 'warming', 'outreach', 'responded', 'in progress'].includes(v))
     return { bg: 'var(--accent-soft)', fg: 'var(--accent-ink)' }
 
-  if (['Unsubscribed'].includes(v))
+  if (v === 'unsubscribed')
     return { bg: 'var(--red-soft)', fg: 'var(--red)' }
 
-  if (['new', 'cold'].includes(v))
+  if (['new', 'cold', 'not started'].includes(v))
     return { bg: 'var(--line)', fg: 'var(--ink-700)' }
 
   return { bg: 'var(--amber-soft)', fg: 'var(--amber)' }
@@ -291,11 +321,87 @@ function ConfirmSelectionPanel({ heading, note, items, summary, onRemove, onConf
   )
 }
 
+// Small modal used for the "quick, single-person" convert-to-lead flow, from
+// either the People table or a person's detail page. Pre-filled with sane
+// defaults; every field stays editable before it writes anything.
+function QuickConvertModal({ person, onClose, onConfirm, creating }) {
+  const [form, setForm] = useState({
+    lead_purpose: '',
+    lead_status: 'New',
+    nurture_stage: 'Cold',
+    owner: '',
+    notes: '',
+    ...DEFAULT_CHANNEL_STAGES,
+  })
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+
+  return (
+    <div className="crm-modal-overlay">
+      <div className="crm-modal-backdrop" onClick={onClose} />
+      <div className="crm-modal-card">
+        <h4 className="crm-confirm-heading">Convert {person.first_name} {person.last_name} to a lead</h4>
+        <p className="crm-confirm-note">Defaults are pre-filled — adjust anything before creating.</p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="crm-form-row">
+            <div>
+              <FieldLabel>Status</FieldLabel>
+              <select className="crm-select" value={form.lead_status} onChange={set('lead_status')}>
+                {LEAD_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <FieldLabel>Nurture stage</FieldLabel>
+              <select className="crm-select" value={form.nurture_stage} onChange={set('nurture_stage')}>
+                {NURTURE_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="crm-form-row">
+            <div><FieldLabel>Purpose</FieldLabel><input className="crm-input" value={form.lead_purpose} onChange={set('lead_purpose')} placeholder="e.g. Outreach" /></div>
+            <div><FieldLabel>Owner</FieldLabel><input className="crm-input" value={form.owner} onChange={set('owner')} /></div>
+          </div>
+
+          <div>
+            <FieldLabel>Outreach — starting stage per channel</FieldLabel>
+            <div className="crm-channel-grid">
+              {CHANNEL_FIELDS.map(cf => (
+                <div key={cf.key}>
+                  <div style={{ fontSize: 12, color: 'var(--ink-700)', marginBottom: 6 }}>{cf.label}</div>
+                  <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)}>
+                    {CHANNEL_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div><FieldLabel>Notes</FieldLabel><textarea className="crm-textarea" value={form.notes} onChange={set('notes')} /></div>
+        </div>
+
+        <div className="crm-confirm-actions" style={{ marginTop: 18 }}>
+          <button className="crm-btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 20px' }} onClick={() => onConfirm(form)} disabled={creating}>
+            {creating ? <Loader2 size={15} className="crm-spin" /> : <Check size={15} />} Create lead
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState('people')
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [toast, setToast] = useState(null) // { message, error }
+
+  // detail = null | { type: 'person' | 'lead', id }
+  // When set, a full-page detail view replaces the current page's content.
+  const [detail, setDetail] = useState(null)
+  const openPerson = (id) => setDetail({ type: 'person', id })
+  const openLead = (id) => setDetail({ type: 'lead', id })
+  const closeDetail = () => setDetail(null)
 
   const showToast = (message, error = false) => setToast({ message, error })
   useEffect(() => {
@@ -304,15 +410,20 @@ export default function App() {
     return () => clearTimeout(t)
   }, [toast])
 
-  const goTo = (key) => { setActivePage(key); setMobileOpen(false) }
+  const goTo = (key) => { setActivePage(key); setDetail(null); setMobileOpen(false) }
 
-  const pageMeta = {
-    people: { title: 'People', sub: 'All contacts synced from Supabase' },
-    leads: { title: 'Leads', sub: 'Every lead across every channel' },
-    events: { title: 'Events', sub: 'Events and who attended them' },
-    attendees: { title: 'Attendees', sub: 'Manage who is attached to each event' },
-    create: { title: 'Create', sub: 'Add a new event, person, or lead' },
-  }[activePage]
+  const pageMeta = detail
+    ? {
+        title: detail.type === 'person' ? 'Person details' : 'Lead details',
+        sub: 'Full record — view, edit, and save changes below',
+      }
+    : {
+        people: { title: 'People', sub: 'All contacts synced from Supabase' },
+        leads: { title: 'Leads', sub: 'Every lead across every channel' },
+        events: { title: 'Events', sub: 'Events and who attended them' },
+        attendees: { title: 'Attendees', sub: 'Manage who is attached to each event' },
+        create: { title: 'Create', sub: 'Add a new event, person, or lead' },
+      }[activePage]
 
   return (
     <div className="crm-root">
@@ -332,9 +443,15 @@ export default function App() {
       <div className="crm-main">
         <header className="crm-header">
           <div className="crm-header-left">
-            <button className="crm-mobile-menu-btn" onClick={() => setMobileOpen(true)} aria-label="Open menu">
-              <Menu size={18} />
-            </button>
+            {detail ? (
+              <button className="crm-back-btn" onClick={closeDetail} aria-label="Back">
+                <ArrowLeft size={18} />
+              </button>
+            ) : (
+              <button className="crm-mobile-menu-btn" onClick={() => setMobileOpen(true)} aria-label="Open menu">
+                <Menu size={18} />
+              </button>
+            )}
             <div style={{ minWidth: 0 }}>
               <h2 className="crm-page-title crm-display">{pageMeta.title}</h2>
               <p className="crm-page-sub">{pageMeta.sub}</p>
@@ -348,11 +465,17 @@ export default function App() {
         </header>
 
         <main className="crm-content">
-          {activePage === 'people' && <PeoplePage showToast={showToast} />}
-          {activePage === 'leads' && <LeadsPage showToast={showToast} />}
-          {activePage === 'events' && <EventsPage showToast={showToast} />}
-          {activePage === 'attendees' && <AttendeesPage showToast={showToast} />}
-          {activePage === 'create' && <CreatePage showToast={showToast} />}
+          {detail && detail.type === 'person' && (
+            <PersonDetailPage personId={detail.id} showToast={showToast} onOpenLead={openLead} />
+          )}
+          {detail && detail.type === 'lead' && (
+            <LeadDetailPage leadId={detail.id} showToast={showToast} onOpenPerson={openPerson} />
+          )}
+          {!detail && activePage === 'people' && <PeoplePage showToast={showToast} onOpenPerson={openPerson} />}
+          {!detail && activePage === 'leads' && <LeadsPage showToast={showToast} onOpenLead={openLead} />}
+          {!detail && activePage === 'events' && <EventsPage showToast={showToast} />}
+          {!detail && activePage === 'attendees' && <AttendeesPage showToast={showToast} />}
+          {!detail && activePage === 'create' && <CreatePage showToast={showToast} />}
         </main>
       </div>
 
@@ -395,26 +518,27 @@ function SidebarContent({ collapsed, setCollapsed, activePage, goTo, onCloseMobi
 }
 
 // ============================================================================
-// PEOPLE — live data, search, pagination, single-row edit-lock, and
-// select-multiple -> Convert to Lead (with a review/confirm step before
-// anything is written to the database).
+// PEOPLE — live data, search, pagination. Clicking a row opens the full
+// Person detail page. Each row also has a one-click "Convert to lead" action
+// that opens a small pre-filled confirm modal (no page change required).
 // ============================================================================
-function PeoplePage({ showToast }) {
+function PeoplePage({ showToast, onOpenPerson }) {
   const [people, setPeople] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [peoplePage, setPeoplePage] = useState(1)
 
-  const [editingId, setEditingId] = useState(null)
-  const [editForm, setEditForm] = useState(null)
-  const [saving, setSaving] = useState(false)
+  // Which person_ids already have at least one lead — drives the small
+  // "Lead" tag next to a name so it's obvious who's already been converted.
+  const [leadPersonIds, setLeadPersonIds] = useState(new Set())
+
+  const [convertingPerson, setConvertingPerson] = useState(null)
+  const [creatingLead, setCreatingLead] = useState(false)
 
   const fetchPeople = useCallback(async () => {
     setLoading(true)
     setError(null)
-    // company_id is a foreign key to companies, so this embeds the company
-    // name in the same query instead of a second round trip.
     const { data, error } = await supabase
       .from('people')
       .select('*, companies(company_name)')
@@ -424,7 +548,12 @@ function PeoplePage({ showToast }) {
     setLoading(false)
   }, [])
 
-  useEffect(() => { fetchPeople() }, [fetchPeople])
+  const fetchLeadPersonIds = useCallback(async () => {
+    const { data, error } = await supabase.from('leads').select('person_id')
+    if (!error) setLeadPersonIds(new Set((data || []).map(r => r.person_id)))
+  }, [])
+
+  useEffect(() => { fetchPeople(); fetchLeadPersonIds() }, [fetchPeople, fetchLeadPersonIds])
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
@@ -437,42 +566,21 @@ function PeoplePage({ showToast }) {
     })
   }, [people, search])
 
-  // Reset to page 1 whenever the search changes so you don't get stranded
-  // on a page that no longer has any matching rows.
   useEffect(() => { setPeoplePage(1) }, [search])
 
-  const startEdit = (p) => {
-    // Opening a new row for editing discards any unsaved changes on the
-    // previously open row — only one row is ever editable at a time.
-    setEditingId(p.person_id)
-    setEditForm({
-      first_name: p.first_name || '',
-      last_name: p.last_name || '',
-      email: p.email || '',
-      job_title: p.job_title || '',
-      country: p.country || '',
-      phone: p.phone || '',
-      mobile: p.mobile || '',
-      status: p.status || '',
+  const handleQuickConvert = async (form) => {
+    setCreatingLead(true)
+    const { error } = await supabase.from('leads').insert({
+      person_id: convertingPerson.person_id,
+      company_id: convertingPerson.company_id || null,
+      event_id: null,
+      ...form,
     })
-  }
-  const cancelEdit = () => { setEditingId(null); setEditForm(null) }
-
-  const saveEdit = async (personId) => {
-    setSaving(true)
-    const { error } = await supabase
-      .from('people')
-      .update({ ...editForm, updated_at: new Date().toISOString() })
-      .eq('person_id', personId)
-    setSaving(false)
-    if (error) {
-      showToast(`Couldn't save: ${error.message}`, true)
-      return
-    }
-    setPeople(prev => prev.map(p => (p.person_id === personId ? { ...p, ...editForm } : p)))
-    setEditingId(null)
-    setEditForm(null)
-    showToast('Person updated')
+    setCreatingLead(false)
+    if (error) { showToast(`Couldn't create lead: ${error.message}`, true); return }
+    setLeadPersonIds(prev => new Set(prev).add(convertingPerson.person_id))
+    setConvertingPerson(null)
+    showToast('Lead created')
   }
 
   return (
@@ -498,54 +606,31 @@ function PeoplePage({ showToast }) {
             </thead>
             <tbody>
               {paginate(filtered, peoplePage).map(p => {
-                const isEditing = editingId === p.person_id
                 const av = avatarStyle(p.first_name + p.last_name)
                 return (
-                  <tr key={p.person_id} className={isEditing ? 'editing' : ''}>
-                    {isEditing ? (
-                      <>
-                        <td>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <input className="crm-cell-input" value={editForm.first_name} onChange={e => setEditForm({ ...editForm, first_name: e.target.value })} placeholder="First" />
-                            <input className="crm-cell-input" value={editForm.last_name} onChange={e => setEditForm({ ...editForm, last_name: e.target.value })} placeholder="Last" />
-                          </div>
-                        </td>
-                        <td><input className="crm-cell-input" value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} /></td>
-                        <td><input className="crm-cell-input" value={editForm.job_title} onChange={e => setEditForm({ ...editForm, job_title: e.target.value })} /></td>
-                        <td style={{ color: 'var(--ink-400)', fontSize: 12 }}>edit company on Leads</td>
-                        <td><input className="crm-cell-input" value={editForm.country} onChange={e => setEditForm({ ...editForm, country: e.target.value })} /></td>
-                        <td><input className="crm-cell-input" value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })} /></td>
-                        <td>
-                          <div className="crm-row-actions">
-                            <button className="crm-icon-action save" onClick={() => saveEdit(p.person_id)} disabled={saving} aria-label="Save">
-                              {saving ? <Loader2 size={14} className="crm-spin" /> : <Save size={14} />}
-                            </button>
-                            <button className="crm-icon-action cancel" onClick={cancelEdit} aria-label="Cancel">
-                              <XCircle size={14} />
-                            </button>
-                          </div>
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td>
-                          <div className="crm-name-cell">
-                            <div className="crm-avatar" style={{ background: av.bg, color: av.fg }}>{initials(p.first_name, p.last_name)}</div>
-                            <span>{p.first_name} {p.last_name}</span>
-                          </div>
-                        </td>
-                        <td>{p.email}</td>
-                        <td>{p.job_title || '—'}</td>
-                        <td>{p.companies?.company_name || '—'}</td>
-                        <td>{p.country || '—'}</td>
-                        <td><Badge value={p.status} /></td>
-                        <td>
-                          <button className="crm-icon-action" onClick={() => startEdit(p)} aria-label="Edit row">
-                            <Pencil size={14} />
-                          </button>
-                        </td>
-                      </>
-                    )}
+                  <tr key={p.person_id} className="clickable" onClick={() => onOpenPerson(p.person_id)}>
+                    <td>
+                      <div className="crm-name-cell">
+                        <div className="crm-avatar" style={{ background: av.bg, color: av.fg }}>{initials(p.first_name, p.last_name)}</div>
+                        <span>{p.first_name} {p.last_name}</span>
+                        {leadPersonIds.has(p.person_id) && <span className="crm-lead-tag">Lead</span>}
+                      </div>
+                    </td>
+                    <td>{p.email}</td>
+                    <td>{p.job_title || '—'}</td>
+                    <td>{p.companies?.company_name || '—'}</td>
+                    <td>{p.country || '—'}</td>
+                    <td><Badge value={p.status} /></td>
+                    <td>
+                      <div className="crm-row-actions">
+                        <button className="crm-icon-action" onClick={(e) => { e.stopPropagation(); onOpenPerson(p.person_id) }} aria-label="View details">
+                          <Eye size={14} />
+                        </button>
+                        <button className="crm-icon-action" onClick={(e) => { e.stopPropagation(); setConvertingPerson(p) }} aria-label="Convert to lead" title="Convert to lead">
+                          <UserPlus size={14} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 )
               })}
@@ -557,15 +642,26 @@ function PeoplePage({ showToast }) {
           <Pagination page={peoplePage} setPage={setPeoplePage} total={filtered.length} />
         </div>
       )}
+
+      {convertingPerson && (
+        <QuickConvertModal
+          person={convertingPerson}
+          onClose={() => setConvertingPerson(null)}
+          onConfirm={handleQuickConvert}
+          creating={creatingLead}
+        />
+      )}
     </div>
   )
 }
 
 // ============================================================================
-// LEADS — live data against the real leads schema, filter by status,
-// "active only" toggle (on by default), single-row edit-lock
+// LEADS — live data. Company lives on the person's record now, so it's
+// dropped from this table. Channels shows the per-channel outreach stage
+// instead of a checkbox. Clicking a row opens the full Lead detail page,
+// where everything (including per-channel stage) is edited.
 // ============================================================================
-function LeadsPage({ showToast }) {
+function LeadsPage({ showToast, onOpenLead }) {
   const [leads, setLeads] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -574,16 +670,12 @@ function LeadsPage({ showToast }) {
   const [activeOnly, setActiveOnly] = useState(true) // default on, per your call
   const [leadsPage, setLeadsPage] = useState(1)
 
-  const [editingId, setEditingId] = useState(null)
-  const [editForm, setEditForm] = useState(null)
-  const [saving, setSaving] = useState(false)
-
   const fetchLeads = useCallback(async () => {
     setLoading(true)
     setError(null)
     const { data, error } = await supabase
       .from('leads')
-      .select('*, people(first_name, last_name), companies(company_name)')
+      .select('*, people(first_name, last_name)')
       .order('created_at', { ascending: false })
     if (error) setError(error.message)
     else setLeads(data || [])
@@ -596,52 +688,22 @@ function LeadsPage({ showToast }) {
     const q = search.toLowerCase().trim()
     return leads.filter(l => {
       if (statusFilter && l.lead_status !== statusFilter) return false
-      // "Active" = not Won and not Lost. Flag if this definition should differ.
+      // "Active" = not Unsubscribed. Flag if this definition should differ.
       if (activeOnly && l.lead_status === 'Unsubscribed') return false
       if (!q) return true
       const personName = `${l.people?.first_name || ''} ${l.people?.last_name || ''}`
-      const companyName = l.companies?.company_name || ''
-      return `${personName} ${companyName} ${l.lead_purpose || ''} ${l.owner || ''}`.toLowerCase().includes(q)
+      return `${personName} ${l.lead_purpose || ''} ${l.owner || ''}`.toLowerCase().includes(q)
     })
   }, [leads, search, statusFilter, activeOnly])
 
   useEffect(() => { setLeadsPage(1) }, [search, statusFilter, activeOnly])
-
-  const startEdit = (l) => {
-    setEditingId(l.lead_id)
-    setEditForm({
-      lead_status: l.lead_status || '',
-      lead_purpose: l.lead_purpose || '',
-      nurture_stage: l.nurture_stage || '',
-      owner: l.owner || '',
-      notes: l.notes || '',
-      cold_calling: !!l.cold_calling,
-      social_media: !!l.social_media,
-      email_campaign: !!l.email_campaign,
-    })
-  }
-  const cancelEdit = () => { setEditingId(null); setEditForm(null) }
-
-  const saveEdit = async (leadId) => {
-    setSaving(true)
-    const { error } = await supabase
-      .from('leads')
-      .update({ ...editForm, updated_at: new Date().toISOString() })
-      .eq('lead_id', leadId)
-    setSaving(false)
-    if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
-    setLeads(prev => prev.map(l => (l.lead_id === leadId ? { ...l, ...editForm } : l)))
-    setEditingId(null)
-    setEditForm(null)
-    showToast('Lead updated')
-  }
 
   return (
     <div>
       <div className="crm-toolbar">
         <div className="crm-search-box">
           <Search size={15} style={{ color: 'var(--ink-400)' }} />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search person, company, purpose, owner…" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search person, purpose, owner…" />
         </div>
         <select className="crm-filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="">All statuses</option>
@@ -661,66 +723,39 @@ function LeadsPage({ showToast }) {
           <table className="crm-table">
             <thead>
               <tr>
-                {['Person', 'Company', 'Purpose', 'Status', 'Nurture', 'Owner', 'Channels', ''].map(h => <th key={h}>{h}</th>)}
+                {['Person', 'Purpose', 'Status', 'Nurture', 'Owner', 'Outreach', ''].map(h => <th key={h}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
               {paginate(filtered, leadsPage).map(l => {
-                const isEditing = editingId === l.lead_id
                 const personName = `${l.people?.first_name || ''} ${l.people?.last_name || ''}`.trim() || '—'
                 return (
-                  <tr key={l.lead_id} className={isEditing ? 'editing' : ''}>
-                    <td>{personName}</td>
-                    <td>{l.companies?.company_name || '—'}</td>
-                    {isEditing ? (
-                      <>
-                        <td><input className="crm-cell-input" value={editForm.lead_purpose} onChange={e => setEditForm({ ...editForm, lead_purpose: e.target.value })} /></td>
-                        <td>
-                          <select className="crm-cell-select" value={editForm.lead_status} onChange={e => setEditForm({ ...editForm, lead_status: e.target.value })}>
-                            <option value="">—</option>
-                            {LEAD_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                        </td>
-                        <td>
-                          <select className="crm-cell-select" value={editForm.nurture_stage} onChange={e => setEditForm({ ...editForm, nurture_stage: e.target.value })}>
-                            <option value="">—</option>
-                            {NURTURE_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                        </td>
-                        <td><input className="crm-cell-input" value={editForm.owner} onChange={e => setEditForm({ ...editForm, owner: e.target.value })} /></td>
-                        <td style={{ fontSize: 12 }}>
-                          <label className="crm-checkbox-row"><input type="checkbox" checked={editForm.cold_calling} onChange={e => setEditForm({ ...editForm, cold_calling: e.target.checked })} /> Cold call</label>
-                          <label className="crm-checkbox-row"><input type="checkbox" checked={editForm.social_media} onChange={e => setEditForm({ ...editForm, social_media: e.target.checked })} /> Social</label>
-                          <label className="crm-checkbox-row"><input type="checkbox" checked={editForm.email_campaign} onChange={e => setEditForm({ ...editForm, email_campaign: e.target.checked })} /> Email</label>
-                        </td>
-                        <td>
-                          <div className="crm-row-actions">
-                            <button className="crm-icon-action save" onClick={() => saveEdit(l.lead_id)} disabled={saving} aria-label="Save">
-                              {saving ? <Loader2 size={14} className="crm-spin" /> : <Save size={14} />}
-                            </button>
-                            <button className="crm-icon-action cancel" onClick={cancelEdit} aria-label="Cancel"><XCircle size={14} /></button>
+                  <tr key={l.lead_id} className="clickable" onClick={() => onOpenLead(l.lead_id)}>
+                    <td style={{ fontWeight: 500, color: 'var(--ink-950)' }}>{personName}</td>
+                    <td>{l.lead_purpose || '—'}</td>
+                    <td><Badge value={l.lead_status} /></td>
+                    <td><Badge value={l.nurture_stage} /></td>
+                    <td>{l.owner || '—'}</td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {CHANNEL_FIELDS.map(cf => (
+                          <div key={cf.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+                            <span style={{ color: 'var(--ink-400)', minWidth: 78 }}>{cf.label}</span>
+                            <Badge value={l[cf.key]} />
                           </div>
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td>{l.lead_purpose || '—'}</td>
-                        <td><Badge value={l.lead_status} /></td>
-                        <td><Badge value={l.nurture_stage} /></td>
-                        <td>{l.owner || '—'}</td>
-                        <td style={{ fontSize: 12 }}>
-                          {[l.cold_calling && 'Cold call', l.social_media && 'Social', l.email_campaign && 'Email'].filter(Boolean).join(', ') || '—'}
-                        </td>
-                        <td>
-                          <button className="crm-icon-action" onClick={() => startEdit(l)} aria-label="Edit row"><Pencil size={14} /></button>
-                        </td>
-                      </>
-                    )}
+                        ))}
+                      </div>
+                    </td>
+                    <td>
+                      <button className="crm-icon-action" onClick={(e) => { e.stopPropagation(); onOpenLead(l.lead_id) }} aria-label="View details">
+                        <Eye size={14} />
+                      </button>
+                    </td>
                   </tr>
                 )
               })}
               {filtered.length === 0 && (
-                <tr className="crm-empty-row"><td colSpan={8}>No leads match these filters.</td></tr>
+                <tr className="crm-empty-row"><td colSpan={7}>No leads match these filters.</td></tr>
               )}
             </tbody>
           </table>
@@ -732,7 +767,285 @@ function LeadsPage({ showToast }) {
 }
 
 // ============================================================================
-// EVENTS — live data, search + status filter, single-row edit-lock
+// PERSON DETAIL — full page. Shows and edits every field for one person,
+// lists any leads already created from them, and offers a one-click
+// "Convert to lead" action that opens the same quick-confirm modal used
+// from the People table.
+// ============================================================================
+function PersonDetailPage({ personId, showToast, onOpenLead }) {
+  const [person, setPerson] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [form, setForm] = useState(null)
+  const [company, setCompany] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  const [leads, setLeads] = useState([])
+  const [leadsLoading, setLeadsLoading] = useState(true)
+
+  const [showConvert, setShowConvert] = useState(false)
+  const [creatingLead, setCreatingLead] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    const { data, error } = await supabase
+      .from('people')
+      .select('*, companies(company_id, company_name)')
+      .eq('person_id', personId)
+      .single()
+    if (error) setError(error.message)
+    else {
+      setPerson(data)
+      setForm({
+        first_name: data.first_name || '', last_name: data.last_name || '', email: data.email || '',
+        job_title: data.job_title || '', country: data.country || '', phone: data.phone || '',
+        mobile: data.mobile || '', linkedin_url: data.linkedin_url || '', status: data.status || '',
+      })
+      setCompany(data.companies ? { company_id: data.companies.company_id, company_name: data.companies.company_name } : null)
+    }
+    setLoading(false)
+  }, [personId])
+
+  const loadLeads = useCallback(async () => {
+    setLeadsLoading(true)
+    const { data, error } = await supabase
+      .from('leads')
+      .select('lead_id, lead_status, lead_purpose, nurture_stage, created_at')
+      .eq('person_id', personId)
+      .order('created_at', { ascending: false })
+    if (!error) setLeads(data || [])
+    setLeadsLoading(false)
+  }, [personId])
+
+  useEffect(() => { load(); loadLeads() }, [load, loadLeads])
+
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+
+  const save = async () => {
+    setSaving(true)
+    const { error } = await supabase
+      .from('people')
+      .update({ ...form, company_id: company?.company_id || null, updated_at: new Date().toISOString() })
+      .eq('person_id', personId)
+    setSaving(false)
+    if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
+    showToast('Person updated')
+    load()
+  }
+
+  const createLead = async (convertForm) => {
+    setCreatingLead(true)
+    const { data, error } = await supabase
+      .from('leads')
+      .insert({ person_id: personId, company_id: company?.company_id || null, event_id: null, ...convertForm })
+      .select()
+      .single()
+    setCreatingLead(false)
+    if (error) { showToast(`Couldn't create lead: ${error.message}`, true); return }
+    showToast('Lead created')
+    setShowConvert(false)
+    loadLeads()
+    if (data && onOpenLead) onOpenLead(data.lead_id)
+  }
+
+  if (loading) return <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading person…</div>
+  if (error) return <div className="crm-error">Couldn't load person: {error}</div>
+  if (!person || !form) return null
+
+  const av = avatarStyle(form.first_name + form.last_name)
+
+  return (
+    <div className="crm-detail-wrap">
+      <div className="crm-detail-top">
+        <div className="crm-name-cell" style={{ fontSize: 15 }}>
+          <div className="crm-avatar" style={{ background: av.bg, color: av.fg, width: 40, height: 40, fontSize: 13 }}>{initials(form.first_name, form.last_name)}</div>
+          <div>
+            <div style={{ fontWeight: 600, color: 'var(--ink-950)', fontSize: 16 }}>{form.first_name} {form.last_name}</div>
+            <div style={{ fontSize: 12.5, color: 'var(--ink-400)' }}>{form.email}</div>
+          </div>
+        </div>
+        <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 18px' }} onClick={() => setShowConvert(true)}>
+          <UserPlus size={15} /> Convert to lead
+        </button>
+      </div>
+
+      <div className="crm-form" style={{ marginTop: 18 }}>
+        <div className="crm-form-row">
+          <div><FieldLabel>First name</FieldLabel><input className="crm-input" value={form.first_name} onChange={set('first_name')} /></div>
+          <div><FieldLabel>Last name</FieldLabel><input className="crm-input" value={form.last_name} onChange={set('last_name')} /></div>
+        </div>
+        <div><FieldLabel>Email</FieldLabel><input className="crm-input" value={form.email} onChange={set('email')} /></div>
+        <div className="crm-form-row">
+          <div><FieldLabel>Job title</FieldLabel><input className="crm-input" value={form.job_title} onChange={set('job_title')} /></div>
+          <div><FieldLabel>Country</FieldLabel><input className="crm-input" value={form.country} onChange={set('country')} /></div>
+        </div>
+        <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} /></div>
+        <div className="crm-form-row">
+          <div><FieldLabel>Phone</FieldLabel><input className="crm-input" value={form.phone} onChange={set('phone')} /></div>
+          <div><FieldLabel>Mobile</FieldLabel><input className="crm-input" value={form.mobile} onChange={set('mobile')} /></div>
+        </div>
+        <div className="crm-form-row">
+          <div><FieldLabel>LinkedIn URL</FieldLabel><input className="crm-input" value={form.linkedin_url} onChange={set('linkedin_url')} /></div>
+          <div><FieldLabel>Status</FieldLabel><input className="crm-input" value={form.status} onChange={set('status')} /></div>
+        </div>
+        <button className="crm-submit-btn" onClick={save} disabled={saving}>
+          {saving ? <Loader2 size={15} className="crm-spin" /> : <Save size={15} />} Save changes
+        </button>
+      </div>
+
+      <div style={{ marginTop: 28 }}>
+        <h3 className="crm-display" style={{ fontSize: 17, margin: '0 0 12px' }}>Leads from this person</h3>
+        {leadsLoading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading leads…</div>}
+        {!leadsLoading && leads.length === 0 && (
+          <div className="crm-confirm-empty" style={{ border: '1px solid var(--line)', borderRadius: 12 }}>No leads yet — convert this person above.</div>
+        )}
+        {!leadsLoading && leads.map(l => (
+          <div
+            key={l.lead_id}
+            className="crm-confirm-row"
+            style={{ border: '1px solid var(--line)', borderRadius: 10, marginBottom: 8, cursor: 'pointer' }}
+            onClick={() => onOpenLead && onOpenLead(l.lead_id)}
+          >
+            <div>
+              <div className="crm-confirm-row-name">{l.lead_purpose || 'Untitled lead'}</div>
+              <div className="crm-confirm-row-sub">{formatDate(l.created_at)}</div>
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <Badge value={l.lead_status} />
+              <Badge value={l.nurture_stage} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {showConvert && (
+        <QuickConvertModal
+          person={{ first_name: form.first_name, last_name: form.last_name }}
+          onClose={() => setShowConvert(false)}
+          onConfirm={createLead}
+          creating={creatingLead}
+        />
+      )}
+    </div>
+  )
+}
+
+// ============================================================================
+// LEAD DETAIL — full page. Person and company are shown read-only (they live
+// on the person's record); everything else, including the three per-channel
+// outreach stages, is editable here.
+// ============================================================================
+function LeadDetailPage({ leadId, showToast, onOpenPerson }) {
+  const [lead, setLead] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [form, setForm] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    const { data, error } = await supabase
+      .from('leads')
+      .select('*, people(person_id, first_name, last_name, email), companies(company_name)')
+      .eq('lead_id', leadId)
+      .single()
+    if (error) setError(error.message)
+    else {
+      setLead(data)
+      setForm({
+        lead_status: data.lead_status || '', lead_purpose: data.lead_purpose || '',
+        nurture_stage: data.nurture_stage || '', owner: data.owner || '', notes: data.notes || '',
+        cold_calling_stage: data.cold_calling_stage || 'Not started',
+        email_campaign_stage: data.email_campaign_stage || 'Not started',
+        social_media_stage: data.social_media_stage || 'Not started',
+      })
+    }
+    setLoading(false)
+  }, [leadId])
+
+  useEffect(() => { load() }, [load])
+
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+
+  const save = async () => {
+    setSaving(true)
+    const { error } = await supabase.from('leads').update({ ...form, updated_at: new Date().toISOString() }).eq('lead_id', leadId)
+    setSaving(false)
+    if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
+    showToast('Lead updated')
+    load()
+  }
+
+  if (loading) return <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading lead…</div>
+  if (error) return <div className="crm-error">Couldn't load lead: {error}</div>
+  if (!lead || !form) return null
+
+  const personName = `${lead.people?.first_name || ''} ${lead.people?.last_name || ''}`.trim() || '—'
+
+  return (
+    <div className="crm-detail-wrap">
+      <div className="crm-confirm-summary">
+        <span
+          className="crm-confirm-summary-item"
+          style={{ cursor: lead.people ? 'pointer' : 'default' }}
+          onClick={() => lead.people && onOpenPerson && onOpenPerson(lead.people.person_id)}
+        >
+          Person: <b>{personName}</b>
+        </span>
+        <span className="crm-confirm-summary-item">Company: <b>{lead.companies?.company_name || '—'}</b></span>
+        <span className="crm-confirm-summary-item">Created: <b>{formatDate(lead.created_at)}</b></span>
+      </div>
+
+      <div className="crm-form">
+        <div className="crm-form-row">
+          <div>
+            <FieldLabel>Status</FieldLabel>
+            <select className="crm-select" value={form.lead_status} onChange={set('lead_status')}>
+              <option value="">—</option>
+              {LEAD_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <FieldLabel>Nurture stage</FieldLabel>
+            <select className="crm-select" value={form.nurture_stage} onChange={set('nurture_stage')}>
+              <option value="">—</option>
+              {NURTURE_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="crm-form-row">
+          <div><FieldLabel>Purpose</FieldLabel><input className="crm-input" value={form.lead_purpose} onChange={set('lead_purpose')} /></div>
+          <div><FieldLabel>Owner</FieldLabel><input className="crm-input" value={form.owner} onChange={set('owner')} /></div>
+        </div>
+
+        <div>
+          <FieldLabel>Outreach progress</FieldLabel>
+          <div className="crm-channel-grid">
+            {CHANNEL_FIELDS.map(cf => (
+              <div key={cf.key}>
+                <div style={{ fontSize: 12.5, color: 'var(--ink-700)', marginBottom: 6 }}>{cf.label}</div>
+                <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)}>
+                  {CHANNEL_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div><FieldLabel>Notes</FieldLabel><textarea className="crm-textarea" value={form.notes} onChange={set('notes')} /></div>
+
+        <button className="crm-submit-btn" onClick={save} disabled={saving}>
+          {saving ? <Loader2 size={15} className="crm-spin" /> : <Save size={15} />} Save changes
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================================
+// EVENTS — live data, search + status filter, single-row edit-lock (unchanged)
 // ============================================================================
 function EventsPage({ showToast }) {
   const [events, setEvents] = useState([])
@@ -856,7 +1169,7 @@ function EventsPage({ showToast }) {
                         <td>{e.location || '—'}</td>
                         <td>{e.country || '—'}</td>
                         <td><Badge value={e.status} /></td>
-                        <td><button className="crm-icon-action" onClick={() => startEdit(e)} aria-label="Edit row"><Pencil size={14} /></button></td>
+                        <td><button className="crm-icon-action" onClick={() => startEdit(e)} aria-label="Edit row"><Eye size={14} /></button></td>
                       </>
                     )}
                   </tr>
@@ -875,9 +1188,7 @@ function EventsPage({ showToast }) {
 // ============================================================================
 // ATTENDEES — pick an event, manage who's already attached to it (edit-lock,
 // removable, paginated), and add more people via search/filter with
-// multi-select (select-all-filtered or one-by-one, deselect before
-// submitting, a sticky confirm bar the moment anyone is selected, and a
-// confirm step before anything is written).
+// multi-select. Unchanged from before.
 // ============================================================================
 function AttendeesPage({ showToast }) {
   const [events, setEvents] = useState([])
@@ -893,7 +1204,6 @@ function AttendeesPage({ showToast }) {
   const [saving, setSaving] = useState(false)
   const [removingId, setRemovingId] = useState(null)
 
-  // "Add people" panel
   const [candidates, setCandidates] = useState([])
   const [candidatesLoading, setCandidatesLoading] = useState(false)
   const [candidateSearch, setCandidateSearch] = useState('')
@@ -939,7 +1249,6 @@ function AttendeesPage({ showToast }) {
     if (selectedEventId) fetchParticipants(selectedEventId)
   }, [selectedEventId, fetchParticipants])
 
-  // Candidate people = anyone not already a participant on this event.
   useEffect(() => {
     if (!selectedEventId) return
     setCandidatePage(1)
@@ -1025,7 +1334,6 @@ function AttendeesPage({ showToast }) {
         <span className="crm-count-note">{participants.length} attached to this event</span>
       </div>
 
-      {/* Current participants — paginated so a big event doesn't turn into an endless scroll */}
       {participantsLoading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading attendees…</div>}
       {!participantsLoading && selectedEventId && (
         <div className="crm-table-wrap" style={{ marginBottom: 28 }}>
@@ -1067,7 +1375,7 @@ function AttendeesPage({ showToast }) {
                         <td><Badge value={p.status} /></td>
                         <td>
                           <div className="crm-row-actions">
-                            <button className="crm-icon-action" onClick={() => startEdit(p)} aria-label="Edit row"><Pencil size={14} /></button>
+                            <button className="crm-icon-action" onClick={() => startEdit(p)} aria-label="Edit row"><Eye size={14} /></button>
                             <button className="crm-icon-action cancel" onClick={() => removeParticipant(p.participant_id)} disabled={removingId === p.participant_id} aria-label="Remove">
                               {removingId === p.participant_id ? <Loader2 size={14} className="crm-spin" /> : <Trash2 size={14} />}
                             </button>
@@ -1085,7 +1393,6 @@ function AttendeesPage({ showToast }) {
         </div>
       )}
 
-      {/* Add people panel */}
       {selectedEventId && (
         <div>
           <h3 className="crm-display" style={{ fontSize: 18, margin: '0 0 12px' }}>Add people to this event</h3>
@@ -1108,9 +1415,6 @@ function AttendeesPage({ showToast }) {
             />
           ) : (
             <>
-              {/* Sticky bar — appears the moment anyone is checked, stays pinned
-                  to the top of the scroll area so it's visible without scrolling
-                  down to the bottom of the candidate list. */}
               <SelectionBar
                 count={selectedPersonIds.size}
                 noun="selected"
@@ -1166,9 +1470,6 @@ function AttendeesPage({ showToast }) {
 
 // ============================================================================
 // CREATE — Event / Person / Lead forms matching the real schema.
-// Event is first since that's usually the starting point of a campaign.
-// Company is inline search-and-select against Supabase rather than a
-// free-typed ID; Lead creation is filter + multi-select, not a manual form.
 // ============================================================================
 function CreatePage({ showToast }) {
   const [tab, setTab] = useState('event')
@@ -1273,22 +1574,23 @@ function PersonForm({ showToast }) {
   )
 }
 
-// Same interaction pattern as Attendees: filter/search people, multi-select
-// (checkboxes, select-all-filtered, clear), set the shared lead fields once,
-// a sticky confirm bar the moment anyone is selected, review exactly who's
-// selected, then one bulk insert into `leads`.
+// Bulk convert-to-lead flow: filter/search people (now including a country
+// filter, so you can scope a campaign to a specific location), multi-select,
+// set the shared lead fields once (including a starting stage per channel),
+// review, then one bulk insert into `leads`.
 function LeadBulkCreate({ showToast }) {
   const [candidates, setCandidates] = useState([])
   const [candidatesLoading, setCandidatesLoading] = useState(false)
   const [search, setSearch] = useState('')
+  const [countryFilter, setCountryFilter] = useState('')
   const [candidatePage, setCandidatePage] = useState(1)
   const [selectedPersonIds, setSelectedPersonIds] = useState(new Set())
   const [step, setStep] = useState('select') // 'select' | 'confirm'
   const [submitting, setSubmitting] = useState(false)
 
   const [form, setForm] = useState({
-    lead_purpose: '', lead_status: 'New', nurture_stage: '', owner: '',
-    cold_calling: false, social_media: false, email_campaign: false, notes: '',
+    lead_purpose: '', lead_status: 'New', nurture_stage: 'Cold', owner: '', notes: '',
+    ...DEFAULT_CHANNEL_STAGES,
   })
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
@@ -1308,6 +1610,20 @@ function LeadBulkCreate({ showToast }) {
     })()
   }, [search, showToast])
 
+  // Location filter is intentionally applied client-side against whatever's
+  // currently loaded, so switching it feels instant while narrowing a campaign.
+  const countryOptions = useMemo(() => {
+    const set = new Set(candidates.map(c => c.country).filter(Boolean))
+    return Array.from(set).sort()
+  }, [candidates])
+
+  const visibleCandidates = useMemo(() => {
+    if (!countryFilter) return candidates
+    return candidates.filter(c => c.country === countryFilter)
+  }, [candidates, countryFilter])
+
+  useEffect(() => { setCandidatePage(1) }, [countryFilter])
+
   const togglePerson = (personId) => {
     setSelectedPersonIds(prev => {
       const next = new Set(prev)
@@ -1316,7 +1632,7 @@ function LeadBulkCreate({ showToast }) {
       return next
     })
   }
-  const selectAllFiltered = () => setSelectedPersonIds(new Set(candidates.map(c => c.person_id)))
+  const selectAllFiltered = () => setSelectedPersonIds(new Set(visibleCandidates.map(c => c.person_id)))
   const clearSelection = () => setSelectedPersonIds(new Set())
 
   const submit = async () => {
@@ -1341,13 +1657,13 @@ function LeadBulkCreate({ showToast }) {
     return (
       <ConfirmSelectionPanel
         heading={`Confirm ${selectedPersonIds.size} ${selectedPersonIds.size === 1 ? 'lead' : 'leads'}`}
-        note="These fields will be applied to every person below. Remove anyone who shouldn't become a lead yet."
+        note="These fields will be applied to every person below. Remove anyone who shouldn't become a lead yet — everyone else keeps this exact starting point."
         summary={[
           { label: 'Purpose', value: form.lead_purpose || '—' },
           { label: 'Status', value: form.lead_status },
           { label: 'Nurture', value: form.nurture_stage || '—' },
           { label: 'Owner', value: form.owner || '—' },
-          { label: 'Channels', value: [form.cold_calling && 'Cold call', form.social_media && 'Social', form.email_campaign && 'Email'].filter(Boolean).join(', ') || 'None' },
+          ...CHANNEL_FIELDS.map(cf => ({ label: cf.label, value: form[cf.key] })),
         ]}
         items={candidates.filter(c => selectedPersonIds.has(c.person_id)).map(c => ({
           id: c.person_id,
@@ -1365,8 +1681,6 @@ function LeadBulkCreate({ showToast }) {
 
   return (
     <div>
-      {/* Sticky bar — appears the instant anyone is checked below, pinned to
-          the top so you never have to scroll down to submit. */}
       <SelectionBar
         count={selectedPersonIds.size}
         noun="selected"
@@ -1388,18 +1702,22 @@ function LeadBulkCreate({ showToast }) {
           <div>
             <FieldLabel>Nurture stage</FieldLabel>
             <select value={form.nurture_stage} onChange={set('nurture_stage')} className="crm-select">
-              <option value="">—</option>
               {NURTURE_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div><FieldLabel>Owner</FieldLabel><input value={form.owner} onChange={set('owner')} className="crm-input" /></div>
         </div>
         <div>
-          <FieldLabel>Outreach channels</FieldLabel>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            <label className="crm-checkbox-row"><input type="checkbox" checked={form.cold_calling} onChange={e => setForm({ ...form, cold_calling: e.target.checked })} /> Cold calling</label>
-            <label className="crm-checkbox-row"><input type="checkbox" checked={form.social_media} onChange={e => setForm({ ...form, social_media: e.target.checked })} /> Social / LinkedIn</label>
-            <label className="crm-checkbox-row"><input type="checkbox" checked={form.email_campaign} onChange={e => setForm({ ...form, email_campaign: e.target.checked })} /> Email campaign</label>
+          <FieldLabel>Outreach — starting stage per channel</FieldLabel>
+          <div className="crm-channel-grid">
+            {CHANNEL_FIELDS.map(cf => (
+              <div key={cf.key}>
+                <div style={{ fontSize: 12, color: 'var(--ink-700)', marginBottom: 6 }}>{cf.label}</div>
+                <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)}>
+                  {CHANNEL_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            ))}
           </div>
         </div>
         <div><FieldLabel>Notes (applied to all selected)</FieldLabel><textarea value={form.notes} onChange={set('notes')} className="crm-textarea" /></div>
@@ -1410,7 +1728,11 @@ function LeadBulkCreate({ showToast }) {
           <Search size={15} style={{ color: 'var(--ink-400)' }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter people by name or email…" />
         </div>
-        <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({candidates.length})</button>
+        <select className="crm-filter-select" value={countryFilter} onChange={e => setCountryFilter(e.target.value)}>
+          <option value="">All locations</option>
+          {countryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({visibleCandidates.length})</button>
         {selectedPersonIds.size > 0 && <button className="crm-toggle-chip" onClick={clearSelection}>Clear selection</button>}
         <span className="crm-count-note">{selectedPersonIds.size} selected</span>
       </div>
@@ -1421,7 +1743,7 @@ function LeadBulkCreate({ showToast }) {
           <table className="crm-table">
             <thead><tr>{['', 'Name', 'Email', 'Job title', 'Company', 'Country'].map(h => <th key={h}>{h}</th>)}</tr></thead>
             <tbody>
-              {paginate(candidates, candidatePage).map(c => (
+              {paginate(visibleCandidates, candidatePage).map(c => (
                 <tr key={c.person_id} onClick={() => togglePerson(c.person_id)} style={{ cursor: 'pointer' }}>
                   <td><input type="checkbox" checked={selectedPersonIds.has(c.person_id)} onChange={() => togglePerson(c.person_id)} onClick={e => e.stopPropagation()} /></td>
                   <td>{c.first_name} {c.last_name}</td>
@@ -1431,10 +1753,10 @@ function LeadBulkCreate({ showToast }) {
                   <td>{c.country || '—'}</td>
                 </tr>
               ))}
-              {candidates.length === 0 && <tr className="crm-empty-row"><td colSpan={6}>No one matches this filter.</td></tr>}
+              {visibleCandidates.length === 0 && <tr className="crm-empty-row"><td colSpan={6}>No one matches this filter.</td></tr>}
             </tbody>
           </table>
-          <Pagination page={candidatePage} setPage={setCandidatePage} total={candidates.length} />
+          <Pagination page={candidatePage} setPage={setCandidatePage} total={visibleCandidates.length} />
         </div>
       )}
     </div>
