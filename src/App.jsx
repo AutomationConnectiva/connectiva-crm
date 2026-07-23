@@ -346,9 +346,9 @@ function QuickConvertModal({ person, onClose, onConfirm, creating }) {
     nurture_stage: 'Outreach',
     owner: '',
     notes: '',
-    cold_calling_stage: 'In progress',
-    email_campaign_stage: 'In progress',
-    social_media_stage: 'In progress',
+    cold_calling_stage: true,
+    email_campaign_stage: true,
+    social_media_stage: true,
   })
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
