@@ -32,19 +32,11 @@ const CHANNEL_FIELDS = [
 ]
 const DEFAULT_CHANNEL_STAGES = CHANNEL_FIELDS.reduce((acc, cf) => ({ ...acc, [cf.key]: 'Not started' }), {})
 
-// Defaults applied when converting a person to a lead in bulk from the
-// People page. "Enabled" channels start at "In progress" rather than
-// "Not started", since choosing to convert someone implies outreach begins.
-const CONVERT_TO_LEAD_DEFAULTS = {
-  lead_status: 'New',
-  nurture_stage: 'Outreach',
-  cold_calling_stage: true,
-  email_campaign_stage: true,
-  social_media_stage: true,
-  lead_purpose: '',
-  owner: '',
-  notes: '',
-}
+// Defaults applied when converting people to leads in bulk from the People
+// page. Every channel starts ON (meaning: start tracking it, at "Not
+// started") unless turned off — either for the whole batch, or as a
+// one-off exception for a specific person.
+const ALL_CHANNELS_ON = CHANNEL_FIELDS.reduce((acc, cf) => ({ ...acc, [cf.key]: true }), {})
 
 const NAV_ITEMS = [
   { key: 'people', label: 'People', icon: Users },
@@ -242,6 +234,16 @@ const CSS = `
   .crm-detail-wrap { max-width: 720px; }
   .crm-detail-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 4px; }
   .crm-channel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+
+  /* ---------- People page: side-by-side convert-to-lead panel ---------- */
+  .crm-split-layout { display: flex; gap: 20px; align-items: flex-start; }
+  .crm-split-main { flex: 1; min-width: 0; }
+  .crm-split-side { width: 320px; flex-shrink: 0; position: sticky; top: 0; }
+  @media (max-width: 980px) { .crm-split-layout { flex-direction: column; } .crm-split-side { width: 100%; position: static; } }
+  .crm-side-panel { border: 1px solid var(--line); background: var(--surface); border-radius: 16px; padding: 18px; }
+  .crm-channel-toggles { display: flex; gap: 8px; flex-wrap: wrap; }
+  .crm-channel-toggle { display: flex; align-items: center; gap: 5px; font-size: 11px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent-ink); cursor: pointer; user-select: none; white-space: nowrap; }
+  .crm-channel-toggle.off { border-color: var(--line); background: var(--paper); color: var(--ink-400); }
 
   /* ---------- Quick convert-to-lead modal (person detail page) ---------- */
   .crm-modal-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; }
@@ -550,7 +552,7 @@ function PeoplePage({ showToast, onOpenPerson }) {
   const [peoplePage, setPeoplePage] = useState(1)
 
   // Which person_ids already have at least one lead — drives the small
-  // "Lead" tag next to a name, and excludes them from bulk conversion.
+  // "Lead" tag next to a name.
   const [leadPersonIds, setLeadPersonIds] = useState(new Set())
 
   // Single-row inline edit (pencil icon).
@@ -558,10 +560,19 @@ function PeoplePage({ showToast, onOpenPerson }) {
   const [editForm, setEditForm] = useState(null)
   const [saving, setSaving] = useState(false)
 
-  // Bulk convert-to-lead flow: 'browse' | 'select' | 'confirm'
+  // Bulk convert-to-lead flow: 'browse' | 'select'. Selecting someone shows
+  // a side panel right next to the table — no separate page or step.
   const [mode, setMode] = useState('browse')
   const [selectedPersonIds, setSelectedPersonIds] = useState(new Set())
   const [converting, setConverting] = useState(false)
+
+  // Bulk defaults for the three outreach channels — every channel starts ON.
+  // Flipping one of these here turns it off for everyone in this batch.
+  const [channelDefaults, setChannelDefaults] = useState(ALL_CHANNELS_ON)
+  // Per-person exceptions: personId -> Set of channel keys that differ from
+  // the batch default for that one person (e.g. everyone gets Email except
+  // this one person).
+  const [channelExceptions, setChannelExceptions] = useState(new Map())
 
   const fetchPeople = useCallback(async () => {
     setLoading(true)
@@ -616,8 +627,18 @@ function PeoplePage({ showToast, onOpenPerson }) {
   }
 
   // ---- bulk convert-to-lead ----
-  const startConvert = () => { setMode('select'); setSelectedPersonIds(new Set()); cancelEdit() }
-  const cancelConvert = () => { setMode('browse'); setSelectedPersonIds(new Set()) }
+  const startConvert = () => {
+    setMode('select')
+    setSelectedPersonIds(new Set())
+    setChannelDefaults(ALL_CHANNELS_ON)
+    setChannelExceptions(new Map())
+    cancelEdit()
+  }
+  const cancelConvert = () => {
+    setMode('browse')
+    setSelectedPersonIds(new Set())
+    setChannelExceptions(new Map())
+  }
   const togglePerson = (personId) => {
     setSelectedPersonIds(prev => {
       const next = new Set(prev)
@@ -626,19 +647,57 @@ function PeoplePage({ showToast, onOpenPerson }) {
       return next
     })
   }
+  const removeFromSelection = (personId) => {
+    togglePerson(personId)
+    setChannelExceptions(prev => {
+      if (!prev.has(personId)) return prev
+      const next = new Map(prev)
+      next.delete(personId)
+      return next
+    })
+  }
   const selectAllFiltered = () => setSelectedPersonIds(new Set(filtered.map(p => p.person_id)))
-  const clearSelection = () => setSelectedPersonIds(new Set())
+  const clearSelection = () => { setSelectedPersonIds(new Set()); setChannelExceptions(new Map()) }
+
+  // Flips a channel for everyone in this batch at once.
+  const toggleChannelDefault = (key) => setChannelDefaults(prev => ({ ...prev, [key]: !prev[key] }))
+
+  // Flips a channel for just one person, as an exception to the batch default.
+  const toggleChannelException = (personId, key) => {
+    setChannelExceptions(prev => {
+      const next = new Map(prev)
+      const set = new Set(next.get(personId) || [])
+      if (set.has(key)) set.delete(key)
+      else set.add(key)
+      next.set(personId, set)
+      return next
+    })
+  }
+  const effectiveChannelValue = (personId, key) => {
+    const isException = channelExceptions.get(personId)?.has(key)
+    return isException ? !channelDefaults[key] : channelDefaults[key]
+  }
 
   const submitConvert = async () => {
     setConverting(true)
     const rows = people
       .filter(p => selectedPersonIds.has(p.person_id))
-      .map(p => ({
-        person_id: p.person_id,
-        company_id: p.company_id || null,
-        event_id: null,
-        ...CONVERT_TO_LEAD_DEFAULTS,
-      }))
+      .map(p => {
+        const row = {
+          person_id: p.person_id,
+          company_id: p.company_id || null,
+          event_id: null,
+          lead_status: 'New',
+          nurture_stage: 'Outreach',
+        }
+        // Only set a channel field if it's effectively "on" for this person —
+        // that starts it at "Not started". Left off, the field stays unset,
+        // meaning that channel isn't being pursued for them.
+        CHANNEL_FIELDS.forEach(cf => {
+          if (effectiveChannelValue(p.person_id, cf.key)) row[cf.key] = 'Not started'
+        })
+        return row
+      })
     const { error } = await supabase.from('leads').insert(rows)
     setConverting(false)
     if (error) { showToast(`Couldn't create leads: ${error.message}`, true); return }
@@ -650,50 +709,13 @@ function PeoplePage({ showToast, onOpenPerson }) {
     showToast(`${rows.length} ${rows.length === 1 ? 'lead' : 'leads'} created`)
     setMode('browse')
     setSelectedPersonIds(new Set())
-  }
-
-  if (mode === 'confirm') {
-    const items = people
-      .filter(p => selectedPersonIds.has(p.person_id))
-      .map(p => ({
-        id: p.person_id,
-        primary: `${p.first_name} ${p.last_name}`,
-        secondary: `${p.email}${p.companies?.company_name ? ' · ' + p.companies.company_name : ''}`,
-      }))
-    return (
-      <ConfirmSelectionPanel
-        heading={`Confirm ${selectedPersonIds.size} ${selectedPersonIds.size === 1 ? 'lead' : 'leads'}`}
-        note="These defaults will be applied to everyone below. Remove anyone who shouldn't become a lead yet — you can fine-tune individual leads afterward from the Leads page."
-        summary={[
-          { label: 'Status', value: CONVERT_TO_LEAD_DEFAULTS.lead_status },
-          { label: 'Nurture', value: CONVERT_TO_LEAD_DEFAULTS.nurture_stage },
-          { label: 'Cold calling', value: CONVERT_TO_LEAD_DEFAULTS.cold_calling_stage},
-          { label: 'Email', value: CONVERT_TO_LEAD_DEFAULTS.email_campaign_stage},
-          { label: 'Social', value: CONVERT_TO_LEAD_DEFAULTS.social_media_stage},
-        ]}
-        items={items}
-        onRemove={togglePerson}
-        onConfirm={submitConvert}
-        onBack={() => setMode('select')}
-        confirming={converting}
-        confirmLabel={`Confirm & create ${selectedPersonIds.size > 0 ? selectedPersonIds.size : ''}`}
-      />
-    )
+    setChannelExceptions(new Map())
   }
 
   const selecting = mode === 'select'
 
-  return (
+  const table = (
     <div>
-      {selecting && (
-        <SelectionBar
-          count={selectedPersonIds.size}
-          noun="selected"
-          label={`Review & convert ${selectedPersonIds.size}`}
-          onConfirm={() => setMode('confirm')}
-        />
-      )}
-
       <div className="crm-toolbar">
         <div className="crm-search-box">
           <Search size={15} style={{ color: 'var(--ink-400)' }} />
@@ -802,13 +824,93 @@ function PeoplePage({ showToast, onOpenPerson }) {
                 )
               })}
               {filtered.length === 0 && (
-                <tr className="crm-empty-row"><td colSpan={selecting ? 7 : 7}>No one matches that search.</td></tr>
+                <tr className="crm-empty-row"><td colSpan={7}>No one matches that search.</td></tr>
               )}
             </tbody>
           </table>
           <Pagination page={peoplePage} setPage={setPeoplePage} total={filtered.length} />
         </div>
       )}
+    </div>
+  )
+
+  if (!selecting) return table
+
+  const selectedItems = people
+    .filter(p => selectedPersonIds.has(p.person_id))
+    .map(p => ({
+      id: p.person_id,
+      primary: `${p.first_name} ${p.last_name}`,
+      secondary: `${p.email}${p.companies?.company_name ? ' · ' + p.companies.company_name : ''}`,
+    }))
+
+  return (
+    <div className="crm-split-layout">
+      <div className="crm-split-main">{table}</div>
+
+      <div className="crm-split-side">
+        <div className="crm-side-panel">
+          <h4 className="crm-confirm-heading">{selectedPersonIds.size} selected</h4>
+
+          {selectedPersonIds.size === 0 ? (
+            <p className="crm-confirm-note" style={{ marginBottom: 0 }}>Check people in the table to add them here.</p>
+          ) : (
+            <>
+              <p className="crm-confirm-note">
+                Every channel starts on for everyone. Click a chip below to turn a channel off for the whole batch, or click a person's chip to except just them.
+              </p>
+
+              <div className="crm-channel-toggles" style={{ marginBottom: 16 }}>
+                {CHANNEL_FIELDS.map(cf => (
+                  <button
+                    key={cf.key}
+                    type="button"
+                    className={`crm-channel-toggle${channelDefaults[cf.key] ? '' : ' off'}`}
+                    onClick={() => toggleChannelDefault(cf.key)}
+                  >
+                    {channelDefaults[cf.key] ? <Check size={11} /> : <X size={11} />} {cf.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="crm-confirm-list">
+                {selectedItems.map(item => (
+                  <div key={item.id} className="crm-confirm-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div>
+                        <div className="crm-confirm-row-name">{item.primary}</div>
+                        <div className="crm-confirm-row-sub">{item.secondary}</div>
+                      </div>
+                      <button className="crm-remove-x" onClick={() => removeFromSelection(item.id)} aria-label={`Remove ${item.primary}`}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <div className="crm-channel-toggles">
+                      {CHANNEL_FIELDS.map(cf => {
+                        const on = effectiveChannelValue(item.id, cf.key)
+                        return (
+                          <button
+                            key={cf.key}
+                            type="button"
+                            className={`crm-channel-toggle${on ? '' : ' off'}`}
+                            onClick={() => toggleChannelException(item.id, cf.key)}
+                          >
+                            {on ? <Check size={10} /> : <X size={10} />} {cf.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <button className="crm-submit-btn" onClick={submitConvert} disabled={converting}>
+                {converting ? <Loader2 size={15} className="crm-spin" /> : <Check size={15} />} Confirm & create {selectedPersonIds.size}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -1821,5 +1923,3 @@ function EventForm({ showToast }) {
     </form>
   )
 }
-
-
