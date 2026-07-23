@@ -38,9 +38,9 @@ const DEFAULT_CHANNEL_STAGES = CHANNEL_FIELDS.reduce((acc, cf) => ({ ...acc, [cf
 const CONVERT_TO_LEAD_DEFAULTS = {
   lead_status: 'New',
   nurture_stage: 'Outreach',
-  cold_calling_stage: 'In progress',
-  email_campaign_stage: 'In progress',
-  social_media_stage: 'In progress',
+  cold_calling_stage: true,
+  email_campaign_stage: true,
+  social_media_stage: true,
   lead_purpose: '',
   owner: '',
   notes: '',
@@ -667,9 +667,9 @@ function PeoplePage({ showToast, onOpenPerson }) {
         summary={[
           { label: 'Status', value: CONVERT_TO_LEAD_DEFAULTS.lead_status },
           { label: 'Nurture', value: CONVERT_TO_LEAD_DEFAULTS.nurture_stage },
-          { label: 'Cold calling', value: CONVERT_TO_LEAD_DEFAULTS.cold_calling_stage },
-          { label: 'Email', value: CONVERT_TO_LEAD_DEFAULTS.email_campaign_stage },
-          { label: 'Social', value: CONVERT_TO_LEAD_DEFAULTS.social_media_stage },
+          { label: 'Cold calling', value: CONVERT_TO_LEAD_DEFAULTS.cold_calling_stage ? 'Yes', 'No' },
+          { label: 'Email', value: CONVERT_TO_LEAD_DEFAULTS.email_campaign_stage ? 'Yes', 'No' },
+          { label: 'Social', value: CONVERT_TO_LEAD_DEFAULTS.social_media_stage ? 'Yes', 'No' },
         ]}
         items={items}
         onRemove={togglePerson}
