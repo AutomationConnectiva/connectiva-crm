@@ -667,9 +667,9 @@ function PeoplePage({ showToast, onOpenPerson }) {
         summary={[
           { label: 'Status', value: CONVERT_TO_LEAD_DEFAULTS.lead_status },
           { label: 'Nurture', value: CONVERT_TO_LEAD_DEFAULTS.nurture_stage },
-          { label: 'Cold calling', value: CONVERT_TO_LEAD_DEFAULTS.cold_calling_stage ? 'Yes': 'No' },
-          { label: 'Email', value: CONVERT_TO_LEAD_DEFAULTS.email_campaign_stage ? 'Yes': 'No' },
-          { label: 'Social', value: CONVERT_TO_LEAD_DEFAULTS.social_media_stage ? 'Yes': 'No' },
+          { label: 'Cold calling', value: CONVERT_TO_LEAD_DEFAULTS.cold_calling_stage},
+          { label: 'Email', value: CONVERT_TO_LEAD_DEFAULTS.email_campaign_stage},
+          { label: 'Social', value: CONVERT_TO_LEAD_DEFAULTS.social_media_stage},
         ]}
         items={items}
         onRemove={togglePerson}
