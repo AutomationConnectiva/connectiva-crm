@@ -357,11 +357,8 @@ function QuickConvertModal({ person, onClose, onConfirm, creating }) {
     owner: '',
     notes: '',
     cold_calling_stage: 'Not started',
-    cold_calling_response: 'Waiting',
     email_campaign_stage: 'Not started',
-    email_campaign_response: 'Waiting',
     social_media_stage: 'Not started',
-    social_media_response: 'Waiting',
   })
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
@@ -761,7 +758,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
         CHANNEL_FIELDS.forEach(cf => {
           if (effectiveChannelValue(p.person_id, cf.key)) {
             row[cf.key] = 'Not started'
-            row[cf.responseKey] = 'Waiting'
+  
           }
         })
         return row
@@ -1327,11 +1324,8 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
         lead_status: data.lead_status || '', lead_purpose: data.lead_purpose || '',
         nurture_stage: data.nurture_stage || '', owner: data.owner || '', notes: data.notes || '',
         cold_calling_stage: data.cold_calling_stage || 'Not started',
-        cold_calling_response: data.cold_calling_response || 'Waiting',
         email_campaign_stage: data.email_campaign_stage || 'Not started',
-        email_campaign_response: data.email_campaign_response || 'Waiting',
         social_media_stage: data.social_media_stage || 'Not started',
-        social_media_response: data.social_media_response || 'Waiting',
       })
     }
     setLoading(false)
@@ -1404,7 +1398,6 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
                 <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)} style={{ marginBottom: 6 }}>
                   {CHANNEL_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
-                <Badge value={form[cf.responseKey]} />
               </div>
             ))}
           </div>
