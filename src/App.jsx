@@ -394,16 +394,13 @@ function QuickConvertModal({ person, onClose, onConfirm, creating }) {
           </div>
 
           <div>
-            <FieldLabel>Outreach — stage & response per channel</FieldLabel>
+            <FieldLabel>Outreach — starting stage per channel</FieldLabel>
             <div className="crm-channel-grid">
               {CHANNEL_FIELDS.map(cf => (
                 <div key={cf.key}>
                   <div style={{ fontSize: 12, color: 'var(--ink-700)', marginBottom: 6 }}>{cf.label}</div>
-                  <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)} style={{ marginBottom: 6 }}>
+                  <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)}>
                     {CHANNEL_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  <select className="crm-select" value={form[cf.responseKey]} onChange={set(cf.responseKey)}>
-                    {CHANNEL_RESPONSE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
               ))}
@@ -1151,7 +1148,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
     setLeadsLoading(true)
     const { data, error } = await supabase
       .from('leads')
-      .select('lead_id, lead_status, lead_purpose, nurture_stage, created_at, event_id, events(event_name), cold_calling_stage, cold_calling_response, email_campaign_stage, email_campaign_response, social_media_stage, social_media_response')
+      .select('lead_id, created_at')
       .eq('person_id', personId)
       .order('created_at', { ascending: false })
     if (!error) setLeads(data || [])
@@ -1251,36 +1248,11 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
         {!leadsLoading && leads.length === 0 && (
           <div className="crm-confirm-empty" style={{ border: '1px solid var(--line)', borderRadius: 12 }}>No leads yet — convert this person above.</div>
         )}
-        {!leadsLoading && leads.map(l => (
-          <div
-            key={l.lead_id}
-            className="crm-confirm-row"
-            style={{ flexDirection: 'column', alignItems: 'stretch', gap: 10, border: '1px solid var(--line)', borderRadius: 10, marginBottom: 8, cursor: 'pointer' }}
-            onClick={() => onOpenLead && onOpenLead(l.lead_id)}
-          >
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-              <div>
-                <div className="crm-confirm-row-name">{l.lead_purpose || 'Untitled lead'}</div>
-                <div className="crm-confirm-row-sub">{formatDate(l.created_at)} · {l.events?.event_name || 'General lead (no event)'}</div>
-              </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <Badge value={l.lead_status} />
-                <Badge value={l.nurture_stage} />
-              </div>
-            </div>
-            <div className="crm-channel-status-grid">
-              {CHANNEL_FIELDS.map(cf => (
-                <div key={cf.key}>
-                  <div className="crm-channel-status-label">{cf.label}</div>
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    <Badge value={l[cf.key]} />
-                    {l[cf.key] && l[cf.key] !== 'Not started' && <Badge value={l[cf.responseKey]} />}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {!leadsLoading && leads.map(l => (
+            <LeadDetailCard key={l.lead_id} leadId={l.lead_id} showToast={showToast} hidePersonChip />
+          ))}
+        </div>
       </div>
 
       <div style={{ marginTop: 20 }}>
@@ -1328,11 +1300,13 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
 }
 
 // ============================================================================
-// LEAD DETAIL — full page. Person and company are shown read-only (they live
-// on the person's record); everything else, including the three per-channel
-// outreach stages, is editable here.
+// LEAD DETAIL CARD — the actual editable lead content, shared by the full
+// Lead detail page and by the Person detail page (which embeds one of these
+// per lead so you get a full overview without navigating away). Response is
+// shown as a read-only badge next to the stage — it reflects what the
+// outreach automation recorded, not something edited by hand here.
 // ============================================================================
-function LeadDetailPage({ leadId, showToast, onOpenPerson }) {
+function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
   const [lead, setLead] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -1344,7 +1318,7 @@ function LeadDetailPage({ leadId, showToast, onOpenPerson }) {
     setError(null)
     const { data, error } = await supabase
       .from('leads')
-      .select('*, people(person_id, first_name, last_name, email), companies(company_name)')
+      .select('*, people(person_id, first_name, last_name, email), companies(company_name), events(event_name)')
       .eq('lead_id', leadId)
       .single()
     if (error) setError(error.message)
@@ -1384,20 +1358,23 @@ function LeadDetailPage({ leadId, showToast, onOpenPerson }) {
   const personName = `${lead.people?.first_name || ''} ${lead.people?.last_name || ''}`.trim() || '—'
 
   return (
-    <div className="crm-detail-wrap">
+    <div style={{ border: '1px solid var(--line)', borderRadius: 16, padding: 20, background: 'var(--surface)' }}>
       <div className="crm-confirm-summary">
-        <span
-          className="crm-confirm-summary-item"
-          style={{ cursor: lead.people ? 'pointer' : 'default' }}
-          onClick={() => lead.people && onOpenPerson && onOpenPerson(lead.people.person_id)}
-        >
-          Person: <b>{personName}</b>
-        </span>
+        {!hidePersonChip && (
+          <span
+            className="crm-confirm-summary-item"
+            style={{ cursor: lead.people ? 'pointer' : 'default' }}
+            onClick={() => lead.people && onOpenPerson && onOpenPerson(lead.people.person_id)}
+          >
+            Person: <b>{personName}</b>
+          </span>
+        )}
+        <span className="crm-confirm-summary-item">Event: <b>{lead.events?.event_name || 'General lead'}</b></span>
         <span className="crm-confirm-summary-item">Company: <b>{lead.companies?.company_name || '—'}</b></span>
         <span className="crm-confirm-summary-item">Created: <b>{formatDate(lead.created_at)}</b></span>
       </div>
 
-      <div className="crm-form">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div className="crm-form-row">
           <div>
             <FieldLabel>Status</FieldLabel>
@@ -1428,9 +1405,7 @@ function LeadDetailPage({ leadId, showToast, onOpenPerson }) {
                 <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)} style={{ marginBottom: 6 }}>
                   {CHANNEL_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
-                <select className="crm-select" value={form[cf.responseKey]} onChange={set(cf.responseKey)}>
-                  {CHANNEL_RESPONSE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <Badge value={form[cf.responseKey]} />
               </div>
             ))}
           </div>
@@ -1442,6 +1417,17 @@ function LeadDetailPage({ leadId, showToast, onOpenPerson }) {
           {saving ? <Loader2 size={15} className="crm-spin" /> : <Save size={15} />} Save changes
         </button>
       </div>
+    </div>
+  )
+}
+
+// ============================================================================
+// LEAD DETAIL — full page wrapper around LeadDetailCard.
+// ============================================================================
+function LeadDetailPage({ leadId, showToast, onOpenPerson }) {
+  return (
+    <div className="crm-detail-wrap">
+      <LeadDetailCard leadId={leadId} showToast={showToast} onOpenPerson={onOpenPerson} />
     </div>
   )
 }
