@@ -1075,9 +1075,9 @@ function LeadsPage({ showToast, onOpenLead }) {
                     <td><Badge value={l.lead_status} /></td>
                     <td><Badge value={l.nurture_stage} /></td>
                     <td>{l.owner || '—'}</td>
-                    <td><Badge value={l.cold_calling_stage} />{l.cold_calling_stage && l.cold_calling_stage !== 'Not started' && <div style={{ marginTop: 4 }}><Badge value={l.cold_calling_response} /></div>}</td>
-                    <td><Badge value={l.email_campaign_stage} />{l.email_campaign_stage && l.email_campaign_stage !== 'Not started' && <div style={{ marginTop: 4 }}><Badge value={l.email_campaign_response} /></div>}</td>
-                    <td><Badge value={l.social_media_stage} />{l.social_media_stage && l.social_media_stage !== 'Not started' && <div style={{ marginTop: 4 }}><Badge value={l.social_media_response} /></div>}</td>
+                       <td><Badge value={l.cold_calling_stage} /></td>
+                       <td><Badge value={l.email_campaign_stage} /></td>
+                       <td><Badge value={l.social_media_stage} /></td>
                     <td>
                       <button className="crm-icon-action" onClick={(e) => { e.stopPropagation(); onOpenLead(l.lead_id) }} aria-label="View details">
                         <Eye size={14} />
