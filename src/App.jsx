@@ -17,15 +17,7 @@ const EVENT_STATUS_OPTIONS = ['Planned', 'Active', 'Completed', 'Cancelled']
 const PARTICIPANT_ROLE_OPTIONS = ['Attendee', 'Speaker', 'Sponsor', 'Organizer']
 const PARTICIPANT_STATUS_OPTIONS = ['Invited', 'Confirmed', 'Attended', 'Cancelled']
 
-// NOTE ON SCHEMA CHANGE: each outreach channel now tracks two things —
-// a STAGE (where the automation is: Not started / In progress / Responded /
-// Converted) and a RESPONSE (what the person actually said: Waiting /
-// Accepted / Declined). That's 6 text columns total on `leads`, default
-// 'Not started' / 'Waiting'. If your Supabase table doesn't have the
-// response columns yet, add them, e.g.:
-//   alter table leads add column cold_calling_response text default 'Waiting';
-//   alter table leads add column email_campaign_response text default 'Waiting';
-//   alter table leads add column social_media_response text default 'Waiting';
+
 const CHANNEL_FIELDS = [
   { key: 'cold_calling_stage', responseKey: 'cold_calling_response', label: 'Cold calling' },
   { key: 'email_campaign_stage', responseKey: 'email_campaign_response', label: 'Email' },
@@ -257,8 +249,7 @@ const CSS = `
 `
 
 // ---------------------------------------------------------------------------
-// Status/stage badge coloring — purely presentational, driven by whatever
-// value is actually in the DB, not a hardcoded row.
+// Status/stage badge coloring — purely presentational
 // ---------------------------------------------------------------------------
 function badgeTone(value) {
   const v = (value || '').toLowerCase()
