@@ -13,7 +13,6 @@ import {
 const LEAD_STATUS_OPTIONS = ['New', 'Contacted', 'Unsubscribed']
 const NURTURE_STAGE_OPTIONS = ['Cold', 'Warming', 'Outreach']
 const CHANNEL_STAGE_OPTIONS = ['Not started', 'In progress', 'Responded', 'Converted']
-const CHANNEL_RESPONSE_OPTIONS = ['Waiting', 'Accepted', 'Declined']
 const EVENT_STATUS_OPTIONS = ['Planned', 'Active', 'Completed', 'Cancelled']
 const PARTICIPANT_ROLE_OPTIONS = ['Attendee', 'Speaker', 'Sponsor', 'Organizer']
 const PARTICIPANT_STATUS_OPTIONS = ['Invited', 'Confirmed', 'Attended', 'Cancelled']
