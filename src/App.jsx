@@ -13,22 +13,24 @@ import {
 const LEAD_STATUS_OPTIONS = ['New', 'Contacted', 'Unsubscribed']
 const NURTURE_STAGE_OPTIONS = ['Cold', 'Warming', 'Outreach']
 const CHANNEL_STAGE_OPTIONS = ['Not started', 'In progress', 'Responded', 'Converted']
+const CHANNEL_RESPONSE_OPTIONS = ['Waiting', 'Accepted', 'Declined']
 const EVENT_STATUS_OPTIONS = ['Planned', 'Active', 'Completed', 'Cancelled']
 const PARTICIPANT_ROLE_OPTIONS = ['Attendee', 'Speaker', 'Sponsor', 'Organizer']
 const PARTICIPANT_STATUS_OPTIONS = ['Invited', 'Confirmed', 'Attended', 'Cancelled']
 
-// NOTE ON SCHEMA CHANGE: this refactor replaces the three boolean columns
-// (cold_calling, social_media, email_campaign) on `leads` with three text
-// columns holding one of CHANNEL_STAGE_OPTIONS each. If your Supabase table
-// still has the old booleans, add these columns (type text, default
-// 'Not started') before wiring this up, e.g.:
-//   alter table leads add column cold_calling_stage text default 'Not started';
-//   alter table leads add column email_campaign_stage text default 'Not started';
-//   alter table leads add column social_media_stage text default 'Not started';
+// NOTE ON SCHEMA CHANGE: each outreach channel now tracks two things —
+// a STAGE (where the automation is: Not started / In progress / Responded /
+// Converted) and a RESPONSE (what the person actually said: Waiting /
+// Accepted / Declined). That's 6 text columns total on `leads`, default
+// 'Not started' / 'Waiting'. If your Supabase table doesn't have the
+// response columns yet, add them, e.g.:
+//   alter table leads add column cold_calling_response text default 'Waiting';
+//   alter table leads add column email_campaign_response text default 'Waiting';
+//   alter table leads add column social_media_response text default 'Waiting';
 const CHANNEL_FIELDS = [
-  { key: 'cold_calling_stage', label: 'Cold calling' },
-  { key: 'email_campaign_stage', label: 'Email' },
-  { key: 'social_media_stage', label: 'Social / LinkedIn' },
+  { key: 'cold_calling_stage', responseKey: 'cold_calling_response', label: 'Cold calling' },
+  { key: 'email_campaign_stage', responseKey: 'email_campaign_response', label: 'Email' },
+  { key: 'social_media_stage', responseKey: 'social_media_response', label: 'Social / LinkedIn' },
 ]
 const DEFAULT_CHANNEL_STAGES = CHANNEL_FIELDS.reduce((acc, cf) => ({ ...acc, [cf.key]: 'Not started' }), {})
 
@@ -236,6 +238,8 @@ const CSS = `
   .crm-detail-wrap { max-width: 720px; }
   .crm-detail-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 4px; }
   .crm-channel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .crm-channel-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; padding-top: 10px; margin-top: 4px; border-top: 1px solid var(--line); }
+  .crm-channel-status-label { font-size: 10.5px; color: var(--ink-400); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 5px; }
 
   /* ---------- People page: side-by-side convert-to-lead panel ---------- */
   .crm-split-layout { display: flex; gap: 20px; align-items: flex-start; }
@@ -260,8 +264,11 @@ const CSS = `
 function badgeTone(value) {
   const v = (value || '').toLowerCase()
 
-  if (v === 'converted')
+  if (['converted', 'accepted'].includes(v))
     return { bg: 'var(--accent-ink)', fg: '#fff' }
+
+  if (v === 'declined')
+    return { bg: 'var(--red-soft)', fg: 'var(--red)' }
 
   if (['contacted', 'warming', 'outreach', 'responded', 'in progress'].includes(v))
     return { bg: 'var(--accent-soft)', fg: 'var(--accent-ink)' }
@@ -269,7 +276,7 @@ function badgeTone(value) {
   if (v === 'unsubscribed')
     return { bg: 'var(--red-soft)', fg: 'var(--red)' }
 
-  if (['new', 'cold', 'not started'].includes(v))
+  if (['new', 'cold', 'not started', 'waiting'].includes(v))
     return { bg: 'var(--line)', fg: 'var(--ink-700)' }
 
   return { bg: 'var(--amber-soft)', fg: 'var(--amber)' }
@@ -350,9 +357,12 @@ function QuickConvertModal({ person, onClose, onConfirm, creating }) {
     nurture_stage: 'Outreach',
     owner: '',
     notes: '',
-    cold_calling_stage: true,
-    email_campaign_stage: true,
-    social_media_stage: true,
+    cold_calling_stage: 'Not started',
+    cold_calling_response: 'Waiting',
+    email_campaign_stage: 'Not started',
+    email_campaign_response: 'Waiting',
+    social_media_stage: 'Not started',
+    social_media_response: 'Waiting',
   })
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
@@ -384,13 +394,16 @@ function QuickConvertModal({ person, onClose, onConfirm, creating }) {
           </div>
 
           <div>
-            <FieldLabel>Outreach — starting stage per channel</FieldLabel>
+            <FieldLabel>Outreach — stage & response per channel</FieldLabel>
             <div className="crm-channel-grid">
               {CHANNEL_FIELDS.map(cf => (
                 <div key={cf.key}>
                   <div style={{ fontSize: 12, color: 'var(--ink-700)', marginBottom: 6 }}>{cf.label}</div>
-                  <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)}>
+                  <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)} style={{ marginBottom: 6 }}>
                     {CHANNEL_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <select className="crm-select" value={form[cf.responseKey]} onChange={set(cf.responseKey)}>
+                    {CHANNEL_RESPONSE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
               ))}
@@ -745,11 +758,15 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
           lead_status: 'New',
           nurture_stage: 'Outreach',
         }
-        // Only set a channel field if it's effectively "on" for this person —
-        // that starts it at "Not started". Left off, the field stays unset,
-        // meaning that channel isn't being pursued for them.
+        // Only set a channel's fields if it's effectively "on" for this
+        // person — that starts the stage at "Not started" and the response
+        // at "Waiting". Left off, both fields stay unset, meaning that
+        // channel isn't being pursued for them at all.
         CHANNEL_FIELDS.forEach(cf => {
-          if (effectiveChannelValue(p.person_id, cf.key)) row[cf.key] = 'Not started'
+          if (effectiveChannelValue(p.person_id, cf.key)) {
+            row[cf.key] = 'Not started'
+            row[cf.responseKey] = 'Waiting'
+          }
         })
         return row
       })
@@ -1061,9 +1078,9 @@ function LeadsPage({ showToast, onOpenLead }) {
                     <td><Badge value={l.lead_status} /></td>
                     <td><Badge value={l.nurture_stage} /></td>
                     <td>{l.owner || '—'}</td>
-                    <td><Badge value={l.cold_calling_stage} /></td>
-                    <td><Badge value={l.email_campaign_stage} /></td>
-                    <td><Badge value={l.social_media_stage} /></td>
+                    <td><Badge value={l.cold_calling_stage} />{l.cold_calling_stage && l.cold_calling_stage !== 'Not started' && <div style={{ marginTop: 4 }}><Badge value={l.cold_calling_response} /></div>}</td>
+                    <td><Badge value={l.email_campaign_stage} />{l.email_campaign_stage && l.email_campaign_stage !== 'Not started' && <div style={{ marginTop: 4 }}><Badge value={l.email_campaign_response} /></div>}</td>
+                    <td><Badge value={l.social_media_stage} />{l.social_media_stage && l.social_media_stage !== 'Not started' && <div style={{ marginTop: 4 }}><Badge value={l.social_media_response} /></div>}</td>
                     <td>
                       <button className="crm-icon-action" onClick={(e) => { e.stopPropagation(); onOpenLead(l.lead_id) }} aria-label="View details">
                         <Eye size={14} />
@@ -1134,7 +1151,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
     setLeadsLoading(true)
     const { data, error } = await supabase
       .from('leads')
-      .select('lead_id, lead_status, lead_purpose, nurture_stage, created_at')
+      .select('lead_id, lead_status, lead_purpose, nurture_stage, created_at, event_id, events(event_name), cold_calling_stage, cold_calling_response, email_campaign_stage, email_campaign_response, social_media_stage, social_media_response')
       .eq('person_id', personId)
       .order('created_at', { ascending: false })
     if (!error) setLeads(data || [])
@@ -1238,16 +1255,29 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
           <div
             key={l.lead_id}
             className="crm-confirm-row"
-            style={{ border: '1px solid var(--line)', borderRadius: 10, marginBottom: 8, cursor: 'pointer' }}
+            style={{ flexDirection: 'column', alignItems: 'stretch', gap: 10, border: '1px solid var(--line)', borderRadius: 10, marginBottom: 8, cursor: 'pointer' }}
             onClick={() => onOpenLead && onOpenLead(l.lead_id)}
           >
-            <div>
-              <div className="crm-confirm-row-name">{l.lead_purpose || 'Untitled lead'}</div>
-              <div className="crm-confirm-row-sub">{formatDate(l.created_at)}</div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+              <div>
+                <div className="crm-confirm-row-name">{l.lead_purpose || 'Untitled lead'}</div>
+                <div className="crm-confirm-row-sub">{formatDate(l.created_at)} · {l.events?.event_name || 'General lead (no event)'}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <Badge value={l.lead_status} />
+                <Badge value={l.nurture_stage} />
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <Badge value={l.lead_status} />
-              <Badge value={l.nurture_stage} />
+            <div className="crm-channel-status-grid">
+              {CHANNEL_FIELDS.map(cf => (
+                <div key={cf.key}>
+                  <div className="crm-channel-status-label">{cf.label}</div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    <Badge value={l[cf.key]} />
+                    {l[cf.key] && l[cf.key] !== 'Not started' && <Badge value={l[cf.responseKey]} />}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         ))}
@@ -1324,8 +1354,11 @@ function LeadDetailPage({ leadId, showToast, onOpenPerson }) {
         lead_status: data.lead_status || '', lead_purpose: data.lead_purpose || '',
         nurture_stage: data.nurture_stage || '', owner: data.owner || '', notes: data.notes || '',
         cold_calling_stage: data.cold_calling_stage || 'Not started',
+        cold_calling_response: data.cold_calling_response || 'Waiting',
         email_campaign_stage: data.email_campaign_stage || 'Not started',
+        email_campaign_response: data.email_campaign_response || 'Waiting',
         social_media_stage: data.social_media_stage || 'Not started',
+        social_media_response: data.social_media_response || 'Waiting',
       })
     }
     setLoading(false)
@@ -1392,8 +1425,11 @@ function LeadDetailPage({ leadId, showToast, onOpenPerson }) {
             {CHANNEL_FIELDS.map(cf => (
               <div key={cf.key}>
                 <div style={{ fontSize: 12.5, color: 'var(--ink-700)', marginBottom: 6 }}>{cf.label}</div>
-                <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)}>
+                <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)} style={{ marginBottom: 6 }}>
                   {CHANNEL_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select className="crm-select" value={form[cf.responseKey]} onChange={set(cf.responseKey)}>
+                  {CHANNEL_RESPONSE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
             ))}
