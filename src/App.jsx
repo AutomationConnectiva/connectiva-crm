@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { supabase } from './lib/supabase'
 import {
   Users, UserPlus, Calendar, Target, Menu, X, Search,
@@ -164,6 +164,8 @@ const CSS = `
   .crm-table tbody tr:hover td { background: #FAFAF8; }
   .crm-table tbody tr.editing td { background: var(--accent-soft); }
   .crm-table tbody tr.clickable { cursor: pointer; }
+  .crm-table tbody tr.disabled { opacity: 0.45; cursor: not-allowed; }
+  .crm-table tbody tr.disabled:hover td { background: inherit; }
   .crm-table tbody tr:last-child td { border-bottom: none; }
   .crm-name-cell { display: flex; align-items: center; gap: 10px; font-weight: 500; color: var(--ink-950); }
   .crm-empty-row td { text-align: center; padding: 40px 24px; color: var(--ink-400); }
@@ -490,7 +492,9 @@ export default function App() {
           {detail && detail.type === 'lead' && (
             <LeadDetailPage leadId={detail.id} showToast={showToast} onOpenPerson={openPerson} />
           )}
-          {!detail && activePage === 'people' && <PeoplePage showToast={showToast} onOpenPerson={openPerson} />}
+          {!detail && activePage === 'people' && (
+            <PeoplePage showToast={showToast} onOpenPerson={openPerson} sidebarCollapsed={collapsed} setSidebarCollapsed={setCollapsed} />
+          )}
           {!detail && activePage === 'leads' && <LeadsPage showToast={showToast} onOpenLead={openLead} />}
           {!detail && activePage === 'events' && <EventsPage showToast={showToast} />}
           {!detail && activePage === 'attendees' && <AttendeesPage showToast={showToast} />}
@@ -544,35 +548,44 @@ function SidebarContent({ collapsed, setCollapsed, activePage, goTo, onCloseMobi
 //    multi-select mode (checkboxes + sticky selection bar + confirm step),
 //    mirroring the Attendees "add people" flow, with sensible bulk defaults.
 // ============================================================================
-function PeoplePage({ showToast, onOpenPerson }) {
+function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarCollapsed }) {
   const [people, setPeople] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [peoplePage, setPeoplePage] = useState(1)
 
-  // Which person_ids already have at least one lead — drives the small
-  // "Lead" tag next to a name.
-  const [leadPersonIds, setLeadPersonIds] = useState(new Set())
+  // Existing leads, keyed by person_id -> Set of event_ids they're already
+  // linked to (a bare lead with no event uses the 'NONE' key). Drives both
+  // the "Lead" tag and which rows get disabled for the currently chosen event.
+  const [leadEventMap, setLeadEventMap] = useState(new Map())
+  const leadPersonIds = useMemo(() => new Set(leadEventMap.keys()), [leadEventMap])
+
+  // Events to link new leads to. Picking one disables anyone already a lead
+  // for that specific event (so you can't create a duplicate), while still
+  // leaving them selectable for a different event.
+  const [events, setEvents] = useState([])
+  const [eventsLoading, setEventsLoading] = useState(true)
+  const [linkEventId, setLinkEventId] = useState('')
 
   // Single-row inline edit (pencil icon).
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [saving, setSaving] = useState(false)
 
-  // Bulk convert-to-lead flow: 'browse' | 'select'. Selecting someone shows
-  // a side panel right next to the table — no separate page or step.
+  // Bulk convert-to-lead flow: 'browse' | 'select'. The side panel only
+  // appears once at least one person is checked — it stays hidden otherwise.
   const [mode, setMode] = useState('browse')
   const [selectedPersonIds, setSelectedPersonIds] = useState(new Set())
   const [converting, setConverting] = useState(false)
 
   // Bulk defaults for the three outreach channels — every channel starts ON.
-  // Flipping one of these here turns it off for everyone in this batch.
   const [channelDefaults, setChannelDefaults] = useState(ALL_CHANNELS_ON)
-  // Per-person exceptions: personId -> Set of channel keys that differ from
-  // the batch default for that one person (e.g. everyone gets Email except
-  // this one person).
   const [channelExceptions, setChannelExceptions] = useState(new Map())
+
+  // Remembers whether the sidebar was already collapsed before we entered
+  // convert mode, so leaving it restores exactly how it was.
+  const wasSidebarCollapsedRef = useRef(sidebarCollapsed)
 
   const fetchPeople = useCallback(async () => {
     setLoading(true)
@@ -586,12 +599,27 @@ function PeoplePage({ showToast, onOpenPerson }) {
     setLoading(false)
   }, [])
 
-  const fetchLeadPersonIds = useCallback(async () => {
-    const { data, error } = await supabase.from('leads').select('person_id')
-    if (!error) setLeadPersonIds(new Set((data || []).map(r => r.person_id)))
+  const fetchLeadEventMap = useCallback(async () => {
+    const { data, error } = await supabase.from('leads').select('person_id, event_id')
+    if (!error) {
+      const map = new Map()
+      ;(data || []).forEach(r => {
+        const key = r.event_id || 'NONE'
+        if (!map.has(r.person_id)) map.set(r.person_id, new Set())
+        map.get(r.person_id).add(key)
+      })
+      setLeadEventMap(map)
+    }
   }, [])
 
-  useEffect(() => { fetchPeople(); fetchLeadPersonIds() }, [fetchPeople, fetchLeadPersonIds])
+  const fetchEvents = useCallback(async () => {
+    setEventsLoading(true)
+    const { data, error } = await supabase.from('events').select('event_id, event_name, start_date').order('start_date', { ascending: false })
+    if (!error) setEvents(data || [])
+    setEventsLoading(false)
+  }, [])
+
+  useEffect(() => { fetchPeople(); fetchLeadEventMap(); fetchEvents() }, [fetchPeople, fetchLeadEventMap, fetchEvents])
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
@@ -605,6 +633,14 @@ function PeoplePage({ showToast, onOpenPerson }) {
   }, [people, search])
 
   useEffect(() => { setPeoplePage(1) }, [search])
+
+  // A person is off-limits for the currently selected event if they're
+  // already a lead tied to that same event (or already a bare/no-event lead,
+  // when no event is chosen here).
+  const isAlreadyLeadForEvent = (personId) => {
+    const key = linkEventId || 'NONE'
+    return leadEventMap.get(personId)?.has(key) || false
+  }
 
   // ---- single-row inline edit ----
   const startEdit = (p) => {
@@ -628,18 +664,23 @@ function PeoplePage({ showToast, onOpenPerson }) {
 
   // ---- bulk convert-to-lead ----
   const startConvert = () => {
+    wasSidebarCollapsedRef.current = sidebarCollapsed
+    setSidebarCollapsed(true)
     setMode('select')
     setSelectedPersonIds(new Set())
     setChannelDefaults(ALL_CHANNELS_ON)
     setChannelExceptions(new Map())
+    setLinkEventId('')
     cancelEdit()
   }
   const cancelConvert = () => {
+    setSidebarCollapsed(wasSidebarCollapsedRef.current)
     setMode('browse')
     setSelectedPersonIds(new Set())
     setChannelExceptions(new Map())
   }
   const togglePerson = (personId) => {
+    if (isAlreadyLeadForEvent(personId)) return
     setSelectedPersonIds(prev => {
       const next = new Set(prev)
       if (next.has(personId)) next.delete(personId)
@@ -656,8 +697,21 @@ function PeoplePage({ showToast, onOpenPerson }) {
       return next
     })
   }
-  const selectAllFiltered = () => setSelectedPersonIds(new Set(filtered.map(p => p.person_id)))
+  const selectAllFiltered = () => setSelectedPersonIds(new Set(filtered.filter(p => !isAlreadyLeadForEvent(p.person_id)).map(p => p.person_id)))
   const clearSelection = () => { setSelectedPersonIds(new Set()); setChannelExceptions(new Map()) }
+
+  // Switching which event these leads link to may invalidate some picks —
+  // drop anyone who's already a lead for the newly chosen event.
+  const handleLinkEventChange = (e) => {
+    const newEventId = e.target.value
+    const key = newEventId || 'NONE'
+    setSelectedPersonIds(prev => {
+      const next = new Set(prev)
+      prev.forEach(id => { if (leadEventMap.get(id)?.has(key)) next.delete(id) })
+      return next
+    })
+    setLinkEventId(newEventId)
+  }
 
   // Flips a channel for everyone in this batch at once.
   const toggleChannelDefault = (key) => setChannelDefaults(prev => ({ ...prev, [key]: !prev[key] }))
@@ -680,13 +734,14 @@ function PeoplePage({ showToast, onOpenPerson }) {
 
   const submitConvert = async () => {
     setConverting(true)
+    const eventIdToLink = linkEventId || null
     const rows = people
       .filter(p => selectedPersonIds.has(p.person_id))
       .map(p => {
         const row = {
           person_id: p.person_id,
           company_id: p.company_id || null,
-          event_id: null,
+          event_id: eventIdToLink,
           lead_status: 'New',
           nurture_stage: 'Outreach',
         }
@@ -701,12 +756,18 @@ function PeoplePage({ showToast, onOpenPerson }) {
     const { error } = await supabase.from('leads').insert(rows)
     setConverting(false)
     if (error) { showToast(`Couldn't create leads: ${error.message}`, true); return }
-    setLeadPersonIds(prev => {
-      const next = new Set(prev)
-      rows.forEach(r => next.add(r.person_id))
+    setLeadEventMap(prev => {
+      const next = new Map(prev)
+      const key = eventIdToLink || 'NONE'
+      rows.forEach(r => {
+        const set = new Set(next.get(r.person_id) || [])
+        set.add(key)
+        next.set(r.person_id, set)
+      })
       return next
     })
     showToast(`${rows.length} ${rows.length === 1 ? 'lead' : 'leads'} created`)
+    setSidebarCollapsed(wasSidebarCollapsedRef.current)
     setMode('browse')
     setSelectedPersonIds(new Set())
     setChannelExceptions(new Map())
@@ -724,7 +785,11 @@ function PeoplePage({ showToast, onOpenPerson }) {
 
         {selecting ? (
           <>
-            <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({filtered.length})</button>
+            <select className="crm-filter-select" value={linkEventId} onChange={handleLinkEventChange} disabled={eventsLoading}>
+              <option value="">No event (general lead)</option>
+              {events.map(e => <option key={e.event_id} value={e.event_id}>{e.event_name} ({formatDate(e.start_date)})</option>)}
+            </select>
+            <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({filtered.filter(p => !isAlreadyLeadForEvent(p.person_id)).length})</button>
             {selectedPersonIds.size > 0 && <button className="crm-toggle-chip" onClick={clearSelection}>Clear selection</button>}
             <button className="crm-btn-secondary" onClick={cancelConvert}>Cancel</button>
           </>
@@ -760,6 +825,7 @@ function PeoplePage({ showToast, onOpenPerson }) {
                 const av = avatarStyle(p.first_name + p.last_name)
                 const alreadyLead = leadPersonIds.has(p.person_id)
                 const isEditing = !selecting && editingId === p.person_id
+                const disabledForEvent = selecting && isAlreadyLeadForEvent(p.person_id)
 
                 if (isEditing) {
                   return (
@@ -788,14 +854,19 @@ function PeoplePage({ showToast, onOpenPerson }) {
                 return (
                   <tr
                     key={p.person_id}
-                    className="clickable"
-                    onClick={() => (selecting ? togglePerson(p.person_id) : onOpenPerson(p.person_id))}
+                    className={`clickable${disabledForEvent ? ' disabled' : ''}`}
+                    onClick={() => {
+                      if (selecting) { if (!disabledForEvent) togglePerson(p.person_id) }
+                      else onOpenPerson(p.person_id)
+                    }}
+                    title={disabledForEvent ? 'Already a lead for this event' : undefined}
                   >
                     {selecting && (
                       <td>
                         <input
                           type="checkbox"
                           checked={selectedPersonIds.has(p.person_id)}
+                          disabled={disabledForEvent}
                           onChange={() => togglePerson(p.person_id)}
                           onClick={e => e.stopPropagation()}
                         />
@@ -834,7 +905,8 @@ function PeoplePage({ showToast, onOpenPerson }) {
     </div>
   )
 
-  if (!selecting) return table
+  // The side panel stays hidden entirely until at least one person is picked.
+  if (!selecting || selectedPersonIds.size === 0) return table
 
   const selectedItems = people
     .filter(p => selectedPersonIds.has(p.person_id))
@@ -851,64 +923,57 @@ function PeoplePage({ showToast, onOpenPerson }) {
       <div className="crm-split-side">
         <div className="crm-side-panel">
           <h4 className="crm-confirm-heading">{selectedPersonIds.size} selected</h4>
+          <p className="crm-confirm-note">
+            Every channel starts on for everyone. Click a chip below to turn a channel off for the whole batch, or click a person's chip to except just them.
+          </p>
 
-          {selectedPersonIds.size === 0 ? (
-            <p className="crm-confirm-note" style={{ marginBottom: 0 }}>Check people in the table to add them here.</p>
-          ) : (
-            <>
-              <p className="crm-confirm-note">
-                Every channel starts on for everyone. Click a chip below to turn a channel off for the whole batch, or click a person's chip to except just them.
-              </p>
-
-              <div className="crm-channel-toggles" style={{ marginBottom: 16 }}>
-                {CHANNEL_FIELDS.map(cf => (
-                  <button
-                    key={cf.key}
-                    type="button"
-                    className={`crm-channel-toggle${channelDefaults[cf.key] ? '' : ' off'}`}
-                    onClick={() => toggleChannelDefault(cf.key)}
-                  >
-                    {channelDefaults[cf.key] ? <Check size={11} /> : <X size={11} />} {cf.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="crm-confirm-list">
-                {selectedItems.map(item => (
-                  <div key={item.id} className="crm-confirm-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div>
-                        <div className="crm-confirm-row-name">{item.primary}</div>
-                        <div className="crm-confirm-row-sub">{item.secondary}</div>
-                      </div>
-                      <button className="crm-remove-x" onClick={() => removeFromSelection(item.id)} aria-label={`Remove ${item.primary}`}>
-                        <X size={14} />
-                      </button>
-                    </div>
-                    <div className="crm-channel-toggles">
-                      {CHANNEL_FIELDS.map(cf => {
-                        const on = effectiveChannelValue(item.id, cf.key)
-                        return (
-                          <button
-                            key={cf.key}
-                            type="button"
-                            className={`crm-channel-toggle${on ? '' : ' off'}`}
-                            onClick={() => toggleChannelException(item.id, cf.key)}
-                          >
-                            {on ? <Check size={10} /> : <X size={10} />} {cf.label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <button className="crm-submit-btn" onClick={submitConvert} disabled={converting}>
-                {converting ? <Loader2 size={15} className="crm-spin" /> : <Check size={15} />} Confirm & create {selectedPersonIds.size}
+          <div className="crm-channel-toggles" style={{ marginBottom: 16 }}>
+            {CHANNEL_FIELDS.map(cf => (
+              <button
+                key={cf.key}
+                type="button"
+                className={`crm-channel-toggle${channelDefaults[cf.key] ? '' : ' off'}`}
+                onClick={() => toggleChannelDefault(cf.key)}
+              >
+                {channelDefaults[cf.key] ? <Check size={11} /> : <X size={11} />} {cf.label}
               </button>
-            </>
-          )}
+            ))}
+          </div>
+
+          <div className="crm-confirm-list">
+            {selectedItems.map(item => (
+              <div key={item.id} className="crm-confirm-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div className="crm-confirm-row-name">{item.primary}</div>
+                    <div className="crm-confirm-row-sub">{item.secondary}</div>
+                  </div>
+                  <button className="crm-remove-x" onClick={() => removeFromSelection(item.id)} aria-label={`Remove ${item.primary}`}>
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="crm-channel-toggles">
+                  {CHANNEL_FIELDS.map(cf => {
+                    const on = effectiveChannelValue(item.id, cf.key)
+                    return (
+                      <button
+                        key={cf.key}
+                        type="button"
+                        className={`crm-channel-toggle${on ? '' : ' off'}`}
+                        onClick={() => toggleChannelException(item.id, cf.key)}
+                      >
+                        {on ? <Check size={10} /> : <X size={10} />} {cf.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button className="crm-submit-btn" onClick={submitConvert} disabled={converting}>
+            {converting ? <Loader2 size={15} className="crm-spin" /> : <Check size={15} />} Confirm & create {selectedPersonIds.size}
+          </button>
         </div>
       </div>
     </div>
