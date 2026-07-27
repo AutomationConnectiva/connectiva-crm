@@ -375,7 +375,7 @@ function ConfirmSelectionPanel({ heading, note, items, summary, onRemove, onConf
 function buildChannelRowFields(effectiveOnFn, subjectKey) {
   const fields = {}
   CHANNEL_FIELDS.forEach(cf => {
-    if (!cf.live) return // social/LinkedIn: no confirmed contract yet, don't touch it
+    if (!cf.live) return 
     if (effectiveOnFn(subjectKey, cf.key)) {
       fields[cf.boolKey] = true
       fields[cf.key] = null
