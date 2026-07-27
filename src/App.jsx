@@ -3,7 +3,7 @@ import { supabase } from './lib/supabase'
 import {
   Users, UserPlus, Calendar, Target, Menu, X, Search,
   Clock, Check, Save, XCircle, Loader2,
-  UserCheck, Trash2, LogOut, ArrowLeft, Eye, Pencil, ChevronDown, ChevronUp
+  UserCheck, Trash2, LogOut, ArrowLeft, Eye, Pencil, ChevronDown, ChevronUp, AlertTriangle
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -12,23 +12,40 @@ import {
 // ---------------------------------------------------------------------------
 const LEAD_STATUS_OPTIONS = ['New', 'Contacted', 'Unsubscribed']
 const NURTURE_STAGE_OPTIONS = ['Cold', 'Warming', 'Outreach']
-const CHANNEL_STAGE_OPTIONS = ['Not started', 'In progress', 'Responded', 'Converted']
 const EVENT_STATUS_OPTIONS = ['Planned', 'Active', 'Completed', 'Cancelled']
 const PARTICIPANT_ROLE_OPTIONS = ['Attendee', 'Speaker', 'Sponsor', 'Organizer']
 const PARTICIPANT_STATUS_OPTIONS = ['Invited', 'Confirmed', 'Attended', 'Cancelled']
 
-
+// ---------------------------------------------------------------------------
+// CHANNEL CONTRACT — this must match what the Make.com scenarios actually
+// read/write, NOT an arbitrary UI choice. Confirmed against live scenarios:
+//
+//   Email        -> ready to send when email_campaign = true AND
+//                    email_campaign_stage IS NULL
+//   Cold calling -> ready to call when cold_calling = true AND
+//                    (cold_calling_stage IS NULL OR cold_calling_stage = 'Not Pitched')
+//                    ALSO requires a phone number (mobile or phone) and a
+//                    linked company (Make's query INNER JOINs companies).
+//   Social/LinkedIn -> NOT wired to a confirmed live contract yet (HeyReach
+//                    scenario still undecided). Left inert on purpose — the
+//                    app does not set its boolean/stage automatically.
+//
+// Once a lead exists, its *_stage fields are owned by the automations (an AI
+// cold-calling agent writes branching outcomes like 'Not Pitched' / 'Send
+// Email'; the email scenario writes things like 'email sent' / 'send
+// failed'). The CRM must never blind-overwrite these on a routine save, so
+// they are shown read-only in the edit view instead of editable dropdowns.
+// ---------------------------------------------------------------------------
 const CHANNEL_FIELDS = [
-  { key: 'cold_calling_stage', responseKey: 'cold_calling_response', label: 'Cold calling' },
-  { key: 'email_campaign_stage', responseKey: 'email_campaign_response', label: 'Email' },
-  { key: 'social_media_stage', responseKey: 'social_media_response', label: 'Social / LinkedIn' },
+  { key: 'cold_calling_stage', boolKey: 'cold_calling', label: 'Cold calling', live: true },
+  { key: 'email_campaign_stage', boolKey: 'email_campaign', label: 'Email', live: true },
+  { key: 'social_media_stage', boolKey: 'social_media', label: 'Social / LinkedIn', live: false },
 ]
-const DEFAULT_CHANNEL_STAGES = CHANNEL_FIELDS.reduce((acc, cf) => ({ ...acc, [cf.key]: 'Not started' }), {})
 
 // Defaults applied when converting people to leads in bulk from the People
-// page. Every channel starts ON (meaning: start tracking it, at "Not
-// started") unless turned off — either for the whole batch, or as a
-// one-off exception for a specific person.
+// page. Every channel starts ON (meaning: start tracking it) unless turned
+// off — either for the whole batch, or as a one-off exception for a
+// specific person.
 const ALL_CHANNELS_ON = CHANNEL_FIELDS.reduce((acc, cf) => ({ ...acc, [cf.key]: true }), {})
 
 const NAV_ITEMS = [
@@ -199,6 +216,8 @@ const CSS = `
 
   .crm-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 999px; background: var(--navy); color: #fff; font-size: 13.5px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
   .crm-toast.error { background: var(--red); }
+  .crm-toast-undo { background: none; border: 1px solid rgba(255,255,255,0.35); color: #fff; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; margin-left: 4px; }
+  .crm-toast-undo:hover { background: rgba(255,255,255,0.12); }
 
   /* ---------- Confirm-selection step (Attendees add / People convert-to-lead) ---------- */
   .crm-confirm-wrap { border: 1px solid var(--line); background: var(--surface); border-radius: 16px; padding: 20px; }
@@ -231,6 +250,10 @@ const CSS = `
   .crm-channel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
   .crm-channel-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; padding-top: 10px; margin-top: 4px; border-top: 1px solid var(--line); }
   .crm-channel-status-label { font-size: 10.5px; color: var(--ink-400); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 5px; }
+  .crm-channel-readonly { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--paper); }
+  .crm-channel-readonly-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .crm-channel-note { font-size: 11.5px; color: var(--ink-400); margin-top: 8px; line-height: 1.4; }
+  .crm-warn-note { display: flex; align-items: flex-start; gap: 6px; font-size: 11.5px; color: var(--amber); background: var(--amber-soft); border-radius: 8px; padding: 6px 9px; margin-top: 6px; }
 
   /* ---------- People page: side-by-side convert-to-lead panel ---------- */
   .crm-split-layout { display: flex; gap: 20px; align-items: flex-start; }
@@ -241,6 +264,7 @@ const CSS = `
   .crm-channel-toggles { display: flex; gap: 8px; flex-wrap: wrap; }
   .crm-channel-toggle { display: flex; align-items: center; gap: 5px; font-size: 11px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent-ink); cursor: pointer; user-select: none; white-space: nowrap; }
   .crm-channel-toggle.off { border-color: var(--line); background: var(--paper); color: var(--ink-400); }
+  .crm-channel-toggle.disabled-live { opacity: 0.5; cursor: not-allowed; }
 
   /* ---------- Quick convert-to-lead modal (person detail page) ---------- */
   .crm-modal-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; }
@@ -249,26 +273,31 @@ const CSS = `
 `
 
 // ---------------------------------------------------------------------------
-// Status/stage badge coloring — purely presentational
+// Status/stage badge coloring — purely presentational. Uses keyword matching
+// rather than an exact-match whitelist, because the automations (Make.com
+// scenarios + the AI cold-calling agent) write values the CRM doesn't fully
+// control the vocabulary of (e.g. "email sent", "Not Pitched", "Send Email",
+// "sent_to_heyreach"). Exact-match-only badges silently fall through to a
+// generic color the moment automation writes something new — keyword
+// matching degrades more gracefully.
 // ---------------------------------------------------------------------------
 function badgeTone(value) {
   const v = (value || '').toLowerCase()
 
-  if (['converted', 'accepted'].includes(v))
+  if (['converted', 'accepted', 'success'].some(k => v === k))
     return { bg: 'var(--accent-ink)', fg: '#fff' }
 
-  if (v === 'declined')
+  if (v.includes('fail') || v.includes('declined') || v === 'unsubscribed')
     return { bg: 'var(--red-soft)', fg: 'var(--red)' }
 
-  if (['contacted', 'warming', 'outreach', 'responded', 'in progress'].includes(v))
-    return { bg: 'var(--accent-soft)', fg: 'var(--accent-ink)' }
-
-  if (v === 'unsubscribed')
-    return { bg: 'var(--red-soft)', fg: 'var(--red)' }
-
-  if (['new', 'cold', 'not started', 'waiting'].includes(v))
+  if (['not pitched', 'not started', 'new', 'cold', 'waiting'].some(k => v === k))
     return { bg: 'var(--line)', fg: 'var(--ink-700)' }
 
+  if (v.includes('sent') || v.includes('replied') || v.includes('progress') || v.includes('connect') ||
+      ['contacted', 'warming', 'outreach', 'responded', 'send email'].some(k => v === k))
+    return { bg: 'var(--accent-soft)', fg: 'var(--accent-ink)' }
+
+  if (!v) return null
   return { bg: 'var(--amber-soft)', fg: 'var(--amber)' }
 }
 function Badge({ value }) {
@@ -317,6 +346,7 @@ function ConfirmSelectionPanel({ heading, note, items, summary, onRemove, onConf
             <div>
               <div className="crm-confirm-row-name">{item.primary}</div>
               {item.secondary && <div className="crm-confirm-row-sub">{item.secondary}</div>}
+              {item.warning && <div className="crm-warn-note"><AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />{item.warning}</div>}
             </div>
             <button className="crm-remove-x" onClick={() => onRemove(item.id)} aria-label={`Remove ${item.primary}`}>
               <X size={14} />
@@ -337,9 +367,44 @@ function ConfirmSelectionPanel({ heading, note, items, summary, onRemove, onConf
   )
 }
 
+// Builds the actual DB row fields for the channels that are effectively "on"
+// for a given person, following the confirmed Make.com contract: set the
+// boolean true and leave the stage column NULL. Never write a placeholder
+// string like 'Not started' into a stage column — that's what silently hides
+// leads from the Make.com scenarios that key off IS NULL.
+function buildChannelRowFields(effectiveOnFn, subjectKey) {
+  const fields = {}
+  CHANNEL_FIELDS.forEach(cf => {
+    if (!cf.live) return // social/LinkedIn: no confirmed contract yet, don't touch it
+    if (effectiveOnFn(subjectKey, cf.key)) {
+      fields[cf.boolKey] = true
+      fields[cf.key] = null
+    }
+  })
+  return fields
+}
+
+// Warnings shown when a person is missing what a live channel's Make.com
+// scenario actually requires to pick the lead up at all. Cold calling's
+// query INNER JOINs companies and requires COALESCE(mobile, phone) IS NOT
+// NULL — a lead can be created "successfully" and still be permanently
+// invisible to that scenario if these are missing.
+function channelReadinessWarning(person, channelKey) {
+  if (channelKey === 'cold_calling_stage') {
+    const missing = []
+    if (!person.mobile && !person.phone) missing.push('no phone number')
+    if (!person.company_id) missing.push('no company linked')
+    if (missing.length > 0) return `Cold calling won't reach them yet — ${missing.join(', ')}.`
+  }
+  return null
+}
+
 // Small modal used for the "single-person, fully editable" convert-to-lead
 // flow from a person's detail page. Pre-filled with sane defaults; every
-// field stays editable before it writes anything.
+// field stays editable before it writes anything. Channel selection is a
+// simple on/off toggle per channel (matching the bulk flow and the Make.com
+// contract) rather than a free-text stage picker — the CRM should never be
+// the one inventing a starting stage value.
 function QuickConvertModal({ person, onClose, onConfirm, creating }) {
   const [form, setForm] = useState({
     lead_purpose: '',
@@ -347,11 +412,15 @@ function QuickConvertModal({ person, onClose, onConfirm, creating }) {
     nurture_stage: 'Outreach',
     owner: '',
     notes: '',
-    cold_calling_stage: 'Not started',
-    email_campaign_stage: 'Not started',
-    social_media_stage: 'Not started',
   })
+  const [channels, setChannels] = useState(ALL_CHANNELS_ON)
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+  const toggleChannel = (key) => setChannels(prev => ({ ...prev, [key]: !prev[key] }))
+
+  const warnings = CHANNEL_FIELDS
+    .filter(cf => cf.live && channels[cf.key])
+    .map(cf => channelReadinessWarning(person, cf.key))
+    .filter(Boolean)
 
   return (
     <div className="crm-modal-overlay">
@@ -381,17 +450,24 @@ function QuickConvertModal({ person, onClose, onConfirm, creating }) {
           </div>
 
           <div>
-            <FieldLabel>Outreach — starting stage per channel</FieldLabel>
-            <div className="crm-channel-grid">
+            <FieldLabel>Outreach channels</FieldLabel>
+            <div className="crm-channel-toggles">
               {CHANNEL_FIELDS.map(cf => (
-                <div key={cf.key}>
-                  <div style={{ fontSize: 12, color: 'var(--ink-700)', marginBottom: 6 }}>{cf.label}</div>
-                  <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)}>
-                    {CHANNEL_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
+                <button
+                  key={cf.key}
+                  type="button"
+                  disabled={!cf.live}
+                  className={`crm-channel-toggle${channels[cf.key] ? '' : ' off'}${!cf.live ? ' disabled-live' : ''}`}
+                  onClick={() => cf.live && toggleChannel(cf.key)}
+                  title={!cf.live ? 'Not wired to an active automation yet' : undefined}
+                >
+                  {channels[cf.key] ? <Check size={11} /> : <X size={11} />} {cf.label}{!cf.live ? ' (inactive)' : ''}
+                </button>
               ))}
             </div>
+            {warnings.map((w, i) => (
+              <div key={i} className="crm-warn-note"><AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />{w}</div>
+            ))}
           </div>
 
           <div><FieldLabel>Notes</FieldLabel><textarea className="crm-textarea" value={form.notes} onChange={set('notes')} /></div>
@@ -399,7 +475,12 @@ function QuickConvertModal({ person, onClose, onConfirm, creating }) {
 
         <div className="crm-confirm-actions" style={{ marginTop: 18 }}>
           <button className="crm-btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 20px' }} onClick={() => onConfirm(form)} disabled={creating}>
+          <button
+            className="crm-submit-btn"
+            style={{ width: 'auto', padding: '10px 20px' }}
+            onClick={() => onConfirm({ ...form, ...buildChannelRowFields((_, key) => channels[key], null) })}
+            disabled={creating}
+          >
             {creating ? <Loader2 size={15} className="crm-spin" /> : <Check size={15} />} Create lead
           </button>
         </div>
@@ -412,7 +493,7 @@ export default function App() {
   const [activePage, setActivePage] = useState('people')
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [toast, setToast] = useState(null) // { message, error }
+  const [toast, setToast] = useState(null) // { message, error, onUndo }
 
   // detail = null | { type: 'person' | 'lead', id }
   // When set, a full-page detail view replaces the current page's content.
@@ -421,10 +502,10 @@ export default function App() {
   const openLead = (id) => setDetail({ type: 'lead', id })
   const closeDetail = () => setDetail(null)
 
-  const showToast = (message, error = false) => setToast({ message, error })
+  const showToast = (message, error = false, onUndo = null) => setToast({ message, error, onUndo })
   useEffect(() => {
     if (!toast) return
-    const t = setTimeout(() => setToast(null), 2600)
+    const t = setTimeout(() => setToast(null), toast.onUndo ? 8000 : 2600)
     return () => clearTimeout(t)
   }, [toast])
 
@@ -503,6 +584,9 @@ export default function App() {
         <div className={`crm-toast${toast.error ? ' error' : ''}`}>
           <Check size={15} style={{ color: toast.error ? '#fff' : '#7FD1B9' }} />
           {toast.message}
+          {toast.onUndo && (
+            <button className="crm-toast-undo" onClick={() => { toast.onUndo(); setToast(null) }}>Undo</button>
+          )}
         </div>
       )}
     </div>
@@ -710,11 +794,19 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     setLinkEventId(newEventId)
   }
 
-  // Flips a channel for everyone in this batch at once.
-  const toggleChannelDefault = (key) => setChannelDefaults(prev => ({ ...prev, [key]: !prev[key] }))
+  // Flips a channel for everyone in this batch at once. Social/LinkedIn is
+  // not a confirmed live automation yet — leave its default off-limits to
+  // toggling here so we don't imply it does something it doesn't.
+  const toggleChannelDefault = (key) => {
+    const cf = CHANNEL_FIELDS.find(c => c.key === key)
+    if (!cf?.live) return
+    setChannelDefaults(prev => ({ ...prev, [key]: !prev[key] }))
+  }
 
   // Flips a channel for just one person, as an exception to the batch default.
   const toggleChannelException = (personId, key) => {
+    const cf = CHANNEL_FIELDS.find(c => c.key === key)
+    if (!cf?.live) return
     setChannelExceptions(prev => {
       const next = new Map(prev)
       const set = new Set(next.get(personId) || [])
@@ -732,29 +824,19 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   const submitConvert = async () => {
     setConverting(true)
     const eventIdToLink = linkEventId || null
-    const rows = people
-      .filter(p => selectedPersonIds.has(p.person_id))
-      .map(p => {
-        const row = {
-          person_id: p.person_id,
-          company_id: p.company_id || null,
-          event_id: eventIdToLink,
-          lead_status: 'New',
-          nurture_stage: 'Outreach',
-        }
-        // Only set a channel's fields if it's effectively "on" for this
-        // person — that starts the stage at "Not started" and the response
-        // at "Waiting". Left off, both fields stay unset, meaning that
-        // channel isn't being pursued for them at all.
-        CHANNEL_FIELDS.forEach(cf => {
-          if (effectiveChannelValue(p.person_id, cf.key)) {
-            row[cf.key] = 'Not started'
-  
-          }
-        })
-        return row
-      })
-    const { error } = await supabase.from('leads').insert(rows)
+    const selectedPeople = people.filter(p => selectedPersonIds.has(p.person_id))
+    const rows = selectedPeople.map(p => ({
+      person_id: p.person_id,
+      company_id: p.company_id || null,
+      event_id: eventIdToLink,
+      lead_status: 'New',
+      nurture_stage: 'Outreach',
+      // Follows the confirmed Make.com contract: boolean = true, stage = null.
+      // Never write a placeholder string here — Make's scenarios key off
+      // "stage IS NULL" to know a channel hasn't been worked yet.
+      ...buildChannelRowFields(effectiveChannelValue, p.person_id),
+    }))
+    const { data: inserted, error } = await supabase.from('leads').insert(rows).select('lead_id, person_id')
     setConverting(false)
     if (error) { showToast(`Couldn't create leads: ${error.message}`, true); return }
     setLeadEventMap(prev => {
@@ -767,7 +849,33 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
       })
       return next
     })
-    showToast(`${rows.length} ${rows.length === 1 ? 'lead' : 'leads'} created`)
+    const newLeadIds = (inserted || []).map(r => r.lead_id)
+    const count = rows.length
+    // Undo window: these leads are seconds old, so a hard delete is safe —
+    // there's no history on them yet to lose. Note this can't un-ring the
+    // Make.com "linkedin-outreach-trigger" webhook if it already fired.
+    showToast(
+      `${count} ${count === 1 ? 'lead' : 'leads'} created`,
+      false,
+      newLeadIds.length > 0
+        ? async () => {
+            const { error: undoError } = await supabase.from('leads').delete().in('lead_id', newLeadIds)
+            if (undoError) { showToast(`Couldn't undo: ${undoError.message}`, true); return }
+            setLeadEventMap(prev => {
+              const next = new Map(prev)
+              const key = eventIdToLink || 'NONE'
+              rows.forEach(r => {
+                const set = new Set(next.get(r.person_id) || [])
+                set.delete(key)
+                if (set.size === 0) next.delete(r.person_id)
+                else next.set(r.person_id, set)
+              })
+              return next
+            })
+            showToast(`Undone — ${count} ${count === 1 ? 'lead' : 'leads'} removed`)
+          }
+        : null
+    )
     setSidebarCollapsed(wasSidebarCollapsedRef.current)
     setMode('browse')
     setSelectedPersonIds(new Set())
@@ -911,11 +1019,18 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
 
   const selectedItems = people
     .filter(p => selectedPersonIds.has(p.person_id))
-    .map(p => ({
-      id: p.person_id,
-      primary: `${p.first_name} ${p.last_name}`,
-      secondary: `${p.email}${p.companies?.company_name ? ' · ' + p.companies.company_name : ''}`,
-    }))
+    .map(p => {
+      const activeWarnings = CHANNEL_FIELDS
+        .filter(cf => cf.live && effectiveChannelValue(p.person_id, cf.key))
+        .map(cf => channelReadinessWarning(p, cf.key))
+        .filter(Boolean)
+      return {
+        id: p.person_id,
+        primary: `${p.first_name} ${p.last_name}`,
+        secondary: `${p.email}${p.companies?.company_name ? ' · ' + p.companies.company_name : ''}`,
+        warning: activeWarnings.length > 0 ? activeWarnings.join(' ') : null,
+      }
+    })
 
   return (
     <div className="crm-split-layout">
@@ -925,7 +1040,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
         <div className="crm-side-panel">
           <h4 className="crm-confirm-heading">{selectedPersonIds.size} selected</h4>
           <p className="crm-confirm-note">
-            Every channel starts on for everyone. Click a chip below to turn a channel off for the whole batch, or click a person's chip to except just them.
+            Every live channel starts on for everyone. Click a chip below to turn a channel off for the whole batch, or click a person's chip to except just them.
           </p>
 
           <div className="crm-channel-toggles" style={{ marginBottom: 16 }}>
@@ -933,10 +1048,12 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
               <button
                 key={cf.key}
                 type="button"
-                className={`crm-channel-toggle${channelDefaults[cf.key] ? '' : ' off'}`}
+                disabled={!cf.live}
+                className={`crm-channel-toggle${channelDefaults[cf.key] ? '' : ' off'}${!cf.live ? ' disabled-live' : ''}`}
                 onClick={() => toggleChannelDefault(cf.key)}
+                title={!cf.live ? 'Not wired to an active automation yet' : undefined}
               >
-                {channelDefaults[cf.key] ? <Check size={11} /> : <X size={11} />} {cf.label}
+                {channelDefaults[cf.key] ? <Check size={11} /> : <X size={11} />} {cf.label}{!cf.live ? ' (inactive)' : ''}
               </button>
             ))}
           </div>
@@ -960,14 +1077,17 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                       <button
                         key={cf.key}
                         type="button"
-                        className={`crm-channel-toggle${on ? '' : ' off'}`}
+                        disabled={!cf.live}
+                        className={`crm-channel-toggle${on ? '' : ' off'}${!cf.live ? ' disabled-live' : ''}`}
                         onClick={() => toggleChannelException(item.id, cf.key)}
+                        title={!cf.live ? 'Not wired to an active automation yet' : undefined}
                       >
                         {on ? <Check size={10} /> : <X size={10} />} {cf.label}
                       </button>
                     )
                   })}
                 </div>
+                {item.warning && <div className="crm-warn-note"><AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />{item.warning}</div>}
               </div>
             ))}
           </div>
@@ -1062,9 +1182,9 @@ function LeadsPage({ showToast, onOpenLead }) {
                     <td><Badge value={l.lead_status} /></td>
                     <td><Badge value={l.nurture_stage} /></td>
                     <td>{l.owner || '—'}</td>
-                       <td><Badge value={l.cold_calling_stage} /></td>
-                       <td><Badge value={l.email_campaign_stage} /></td>
-                       <td><Badge value={l.social_media_stage} /></td>
+                       <td>{l.cold_calling ? <Badge value={l.cold_calling_stage || 'Not Pitched'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
+                       <td>{l.email_campaign ? <Badge value={l.email_campaign_stage || 'Queued'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
+                       <td>{l.social_media ? <Badge value={l.social_media_stage || 'Queued'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
                     <td>
                       <button className="crm-icon-action" onClick={(e) => { e.stopPropagation(); onOpenLead(l.lead_id) }} aria-label="View details">
                         <Eye size={14} />
@@ -1178,7 +1298,16 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
       .single()
     setCreatingLead(false)
     if (error) { showToast(`Couldn't create lead: ${error.message}`, true); return }
-    showToast('Lead created')
+    showToast(
+      'Lead created',
+      false,
+      async () => {
+        const { error: undoError } = await supabase.from('leads').delete().eq('lead_id', data.lead_id)
+        if (undoError) { showToast(`Couldn't undo: ${undoError.message}`, true); return }
+        showToast('Undone — lead removed')
+        loadLeads()
+      }
+    )
     setShowConvert(false)
     loadLeads()
     if (data && onOpenLead) onOpenLead(data.lead_id)
@@ -1276,7 +1405,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
 
       {showConvert && (
         <QuickConvertModal
-          person={{ first_name: form.first_name, last_name: form.last_name }}
+          person={{ first_name: form.first_name, last_name: form.last_name, mobile: form.mobile, phone: form.phone, company_id: company?.company_id || null }}
           onClose={() => setShowConvert(false)}
           onConfirm={createLead}
           creating={creatingLead}
@@ -1289,9 +1418,22 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
 // ============================================================================
 // LEAD DETAIL CARD — the actual editable lead content, shared by the full
 // Lead detail page and by the Person detail page (which embeds one of these
-// per lead so you get a full overview without navigating away). Response is
-// shown as a read-only badge next to the stage — it reflects what the
-// outreach automation recorded, not something edited by hand here.
+// per lead so you get a full overview without navigating away).
+//
+// IMPORTANT: the three channel *_stage columns (cold_calling_stage,
+// email_campaign_stage, social_media_stage) are shown READ-ONLY here. They
+// are owned by live automations — an AI cold-calling agent writes branching
+// outcomes into cold_calling_stage, and the Make.com email scenario writes
+// its own progress values into email_campaign_stage. A generic "save your
+// edits" form that includes these as free-editable dropdowns can silently
+// clobber automation state (e.g. reset a lead that's mid-flow back to
+// "Not started", making it look eligible for re-contact, or erasing an
+// outcome another automated step already branched on).
+//
+// What IS safely human-editable per channel is just the on/off boolean
+// (whether this channel should be pursued for the lead at all) — turning a
+// channel off is a legitimate "stop trying this on them" action and doesn't
+// require knowing the automation's internal state vocabulary.
 // ============================================================================
 function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
   const [lead, setLead] = useState(null)
@@ -1305,7 +1447,7 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
     setError(null)
     const { data, error } = await supabase
       .from('leads')
-      .select('*, people(person_id, first_name, last_name, email), companies(company_name), events(event_name)')
+      .select('*, people(person_id, first_name, last_name, email, mobile, phone), companies(company_name), events(event_name)')
       .eq('lead_id', leadId)
       .single()
     if (error) setError(error.message)
@@ -1314,9 +1456,9 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
       setForm({
         lead_status: data.lead_status || '', lead_purpose: data.lead_purpose || '',
         nurture_stage: data.nurture_stage || '', owner: data.owner || '', notes: data.notes || '',
-        cold_calling_stage: data.cold_calling_stage || 'Not started',
-        email_campaign_stage: data.email_campaign_stage || 'Not started',
-        social_media_stage: data.social_media_stage || 'Not started',
+        cold_calling: !!data.cold_calling,
+        email_campaign: !!data.email_campaign,
+        social_media: !!data.social_media,
       })
     }
     setLoading(false)
@@ -1325,9 +1467,13 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
   useEffect(() => { load() }, [load])
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+  const toggleChannel = (boolKey) => setForm(prev => ({ ...prev, [boolKey]: !prev[boolKey] }))
 
   const save = async () => {
     setSaving(true)
+    // Deliberately excludes the three *_stage columns — those are
+    // automation-owned and never part of this form's payload, so a routine
+    // save can never overwrite whatever the automations last wrote there.
     const { error } = await supabase.from('leads').update({ ...form, updated_at: new Date().toISOString() }).eq('lead_id', leadId)
     setSaving(false)
     if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
@@ -1340,6 +1486,10 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
   if (!lead || !form) return null
 
   const personName = `${lead.people?.first_name || ''} ${lead.people?.last_name || ''}`.trim() || '—'
+  const coldCallingWarning = form.cold_calling ? channelReadinessWarning(
+    { mobile: lead.people?.mobile, phone: lead.people?.phone, company_id: lead.company_id },
+    'cold_calling_stage'
+  ) : null
 
   return (
     <div style={{ border: '1px solid var(--line)', borderRadius: 16, padding: 20, background: 'var(--surface)' }}>
@@ -1381,17 +1531,38 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
         </div>
 
         <div>
-          <FieldLabel>Outreach progress</FieldLabel>
+          <FieldLabel>Outreach channels</FieldLabel>
+          <p className="crm-channel-note" style={{ marginTop: -4, marginBottom: 10 }}>
+            Progress within each channel is driven by automation and shown read-only. Toggle a channel off to stop pursuing it for this lead.
+          </p>
           <div className="crm-channel-grid">
-            {CHANNEL_FIELDS.map(cf => (
-              <div key={cf.key}>
-                <div style={{ fontSize: 12.5, color: 'var(--ink-700)', marginBottom: 6 }}>{cf.label}</div>
-                <select className="crm-select" value={form[cf.key]} onChange={set(cf.key)} style={{ marginBottom: 6 }}>
-                  {CHANNEL_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-            ))}
+            {CHANNEL_FIELDS.map(cf => {
+              const boolValue = form[cf.boolKey]
+              const stageValue = lead[cf.key]
+              return (
+                <div key={cf.key} className="crm-channel-readonly">
+                  <div className="crm-channel-readonly-head">
+                    <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--ink-700)' }}>{cf.label}</span>
+                    <button
+                      type="button"
+                      disabled={!cf.live}
+                      className={`crm-channel-toggle${boolValue ? '' : ' off'}${!cf.live ? ' disabled-live' : ''}`}
+                      onClick={() => cf.live && toggleChannel(cf.boolKey)}
+                      title={!cf.live ? 'Not wired to an active automation yet' : (boolValue ? 'Turn this channel off' : 'Turn this channel on')}
+                    >
+                      {boolValue ? <Check size={10} /> : <X size={10} />} {boolValue ? 'On' : 'Off'}
+                    </button>
+                  </div>
+                  {boolValue ? <Badge value={stageValue} /> : <span style={{ color: 'var(--ink-400)', fontSize: 12.5 }}>Not being pursued</span>}
+                </div>
+              )
+            })}
           </div>
+          {coldCallingWarning && (
+            <div className="crm-warn-note" style={{ marginTop: 10 }}>
+              <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />{coldCallingWarning}
+            </div>
+          )}
         </div>
 
         <div><FieldLabel>Notes</FieldLabel><textarea className="crm-textarea" value={form.notes} onChange={set('notes')} /></div>
@@ -1867,10 +2038,12 @@ function FieldLabel({ children }) {
 }
 
 // Lightweight inline company search — types a name, gets matches, picks one.
+// Closes on outside click/blur so a stale result list doesn't linger.
 function CompanyPicker({ value, onChange }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [open, setOpen] = useState(false)
+  const wrapRef = useRef(null)
 
   useEffect(() => {
     if (!query.trim()) { setResults([]); return }
@@ -1881,8 +2054,16 @@ function CompanyPicker({ value, onChange }) {
     return () => clearTimeout(t)
   }, [query])
 
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ position: 'relative' }} ref={wrapRef}>
       <input
         className="crm-input"
         placeholder="Search company by name…"
