@@ -722,7 +722,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     setError(null)
     const { data, error } = await supabase
       .from('people')
-      .select('*')
+      .select('*, companies(company_name)')
       .order('created_at', { ascending: false })
     if (error) setError(error.message)
     else setPeople(data || [])
@@ -756,7 +756,8 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     return people.filter(p => {
       if (industryFilter && p.industry !== industryFilter) return false
       if (!q) return true
-      return `${p.first_name} ${p.last_name} ${p.email} ${p.job_title || ''} ${p.industry || ''} ${p.country || ''}`
+      const companyName = p.companies?.company_name || ''
+      return `${p.first_name} ${p.last_name} ${p.email} ${p.job_title || ''} ${p.industry || ''} ${companyName} ${p.country || ''}`
         .toLowerCase()
         .includes(q)
     })
@@ -979,6 +980,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 <th>Email</th>
                 <th>Job title</th>
                 <th>Industry</th>
+                <th>Company</th>
                 <th>Country</th>
                 <th>Status</th>
                 {!selecting && <th></th>}
@@ -1006,6 +1008,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                           {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
                         </select>
                       </td>
+                      <td>{p.companies?.company_name || '—'}</td>
                       <td><input className="crm-cell-input" value={editForm.country} onChange={e => setEditForm({ ...editForm, country: e.target.value })} /></td>
                       <td><input className="crm-cell-input" value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })} /></td>
                       <td>
@@ -1051,6 +1054,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                     <td>{p.email}</td>
                     <td>{p.job_title || '—'}</td>
                     <td>{p.industry || '—'}</td>
+                    <td>{p.companies?.company_name || '—'}</td>
                     <td>{p.country || '—'}</td>
                     <td><Badge value={p.status} /></td>
                     {!selecting && (
@@ -1064,7 +1068,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 )
               })}
               {filtered.length === 0 && (
-                <tr className="crm-empty-row"><td colSpan={7}>No one matches that search.</td></tr>
+                <tr className="crm-empty-row"><td colSpan={8}>No one matches that search.</td></tr>
               )}
             </tbody>
           </table>
@@ -1084,10 +1088,11 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
         .filter(cf => cf.live && effectiveChannelValue(p.person_id, cf.key))
         .map(cf => channelReadinessWarning(p, cf.key))
         .filter(Boolean)
+      const companyName = p.companies?.company_name || ''
       return {
         id: p.person_id,
         primary: `${p.first_name} ${p.last_name}`,
-        secondary: `${p.email}${p.industry ? ' · ' + p.industry : ''}`,
+        secondary: `${p.email}${p.industry ? ' · ' + p.industry : ''}${companyName ? ' · ' + companyName : ''}`,
         warning: activeWarnings.length > 0 ? activeWarnings.join(' ') : null,
       }
     })
