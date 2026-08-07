@@ -1195,19 +1195,19 @@ function LeadsPage({ showToast, onOpenLead }) {
         .eq('system_name', 'Email Outreach')
       if (!error && data) {
         const map = {}
-        data.forEach(r => { map[r.config2] = r.description })
+        data.forEach(r => { map[(r.config2 || '').toString().trim()] = r.description })
         setStageLabels(map)
       }
     })()
   }, [])
-  const emailStageLabel = (code) => stageLabels[code] || code
+  const emailStageLabel = (code) => stageLabels[(code || '').toString().trim()] || code
 
   const fetchLeads = useCallback(async () => {
     setLoading(true)
     setError(null)
     const { data, error } = await supabase
       .from('leads')
-      .select('*, people(first_name, last_name)')
+      .select('*, people(first_name, last_name, owner_email)')
       .order('created_at', { ascending: false })
     if (error) setError(error.message)
     else setLeads(data || [])
@@ -1224,7 +1224,7 @@ function LeadsPage({ showToast, onOpenLead }) {
       if (activeOnly && l.lead_status === 'Unsubscribed') return false
       if (!q) return true
       const personName = `${l.people?.first_name || ''} ${l.people?.last_name || ''}`
-      return `${personName} ${l.lead_purpose || ''} ${l.owner || ''}`.toLowerCase().includes(q)
+      return `${personName} ${l.lead_purpose || ''} ${l.people?.owner_email || ''}`.toLowerCase().includes(q)
     })
   }, [leads, search, statusFilter, activeOnly])
 
@@ -1267,7 +1267,7 @@ function LeadsPage({ showToast, onOpenLead }) {
                     <td>{l.lead_purpose || '—'}</td>
                     <td><Badge value={l.lead_status} /></td>
                     <td><Badge value={l.nurture_stage} /></td>
-                    <td>{l.owner || '—'}</td>
+                    <td>{l.people?.owner_email || '—'}</td>
                        <td>{l.cold_calling ? <Badge value={l.cold_calling_stage || 'Not Pitched'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
                        <td>{l.email_campaign ? <Badge value={emailStageLabel(l.email_campaign_stage) || 'Queued'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
                        <td>{l.social_media ? <Badge value={l.social_media_stage || 'Queued'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
@@ -1560,7 +1560,7 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
         .eq('system_name', 'Email Outreach')
       if (!error && data) {
         const map = {}
-        data.forEach(r => { map[r.config2] = r.description })
+        data.forEach(r => { map[(r.config2 || '').toString().trim()] = r.description })
         setStageLabels(map)
       }
     })()
@@ -1678,7 +1678,7 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
               // cold_calling_stage and social_media_stage are already
               // written as plain readable strings by their automations.
               const stageValue = cf.key === 'email_campaign_stage'
-                ? (stageLabels[rawStageValue] || rawStageValue)
+                ? (stageLabels[(rawStageValue || '').toString().trim()] || rawStageValue)
                 : rawStageValue
               return (
                 <div key={cf.key} className="crm-channel-readonly">
