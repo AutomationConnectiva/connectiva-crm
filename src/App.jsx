@@ -18,6 +18,18 @@ const PARTICIPANT_ROLE_OPTIONS = ['Attendee', 'Speaker', 'Sponsor', 'Organizer']
 const PARTICIPANT_STATUS_OPTIONS = ['Invited', 'Confirmed', 'Attended', 'Cancelled']
 // people.industry — confirmed against the live schema, three values in use.
 const INDUSTRY_OPTIONS = ['Insurance', 'Banking', 'Finance']
+// people.owner_email — must exactly match what the Make.com send scenario
+// matches against (nabi@ / alia@ / abdool@ / chris@connectiva.events). A
+// free-text input here risks the exact same silent-mismatch bug found
+// earlier (a trailing space on one row meant that lead was invisible to
+// its assigned persona) — a fixed dropdown makes that class of bug
+// impossible to reintroduce by hand.
+const OWNER_EMAIL_OPTIONS = [
+  'nabi@connectiva.events',
+  'alia@connectiva.events',
+  'abdool@connectiva.events',
+  'chris@connectiva.events',
+]
 
 // ---------------------------------------------------------------------------
 // CHANNEL CONTRACT — this must match what the Make.com scenarios actually
@@ -982,6 +994,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 <th>Industry</th>
                 <th>Company</th>
                 <th>Country</th>
+                <th>LinkedIn</th>
                 <th>Status</th>
                 {!selecting && <th></th>}
               </tr>
@@ -1010,6 +1023,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                       </td>
                       <td>{p.companies?.company_name || '—'}</td>
                       <td><input className="crm-cell-input" value={editForm.country} onChange={e => setEditForm({ ...editForm, country: e.target.value })} /></td>
+                      <td>{p.linkedin_url ? <a href={p.linkedin_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
                       <td><input className="crm-cell-input" value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })} /></td>
                       <td>
                         <div className="crm-row-actions">
@@ -1056,6 +1070,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                     <td>{p.industry || '—'}</td>
                     <td>{p.companies?.company_name || '—'}</td>
                     <td>{p.country || '—'}</td>
+                    <td>{p.linkedin_url ? <a href={p.linkedin_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
                     <td><Badge value={p.status} /></td>
                     {!selecting && (
                       <td>
@@ -1068,7 +1083,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 )
               })}
               {filtered.length === 0 && (
-                <tr className="crm-empty-row"><td colSpan={8}>No one matches that search.</td></tr>
+                <tr className="crm-empty-row"><td colSpan={9}>No one matches that search.</td></tr>
               )}
             </tbody>
           </table>
@@ -1331,7 +1346,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
         first_name: data.first_name || '', last_name: data.last_name || '', email: data.email || '',
         job_title: data.job_title || '', country: data.country || '', phone: data.phone || '',
         mobile: data.mobile || '', linkedin_url: data.linkedin_url || '', status: data.status || '',
-        industry: data.industry || '',
+        industry: data.industry || '', lead_purpose: data.lead_purpose || '', owner_email: data.owner_email || '',
       })
       setCompany(data.companies ? { company_id: data.companies.company_id, company_name: data.companies.company_name } : null)
     }
@@ -1440,6 +1455,16 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
         <div className="crm-form-row">
           <div><FieldLabel>Country</FieldLabel><input className="crm-input" value={form.country} onChange={set('country')} /></div>
           <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} /></div>
+        </div>
+        <div className="crm-form-row">
+          <div><FieldLabel>Lead purpose</FieldLabel><input className="crm-input" value={form.lead_purpose} onChange={set('lead_purpose')} placeholder="e.g. Sponsor Acquisition, Event Invitation" /></div>
+          <div>
+            <FieldLabel>Owner email</FieldLabel>
+            <select className="crm-select" value={form.owner_email} onChange={set('owner_email')}>
+              <option value="">— Unassigned —</option>
+              {OWNER_EMAIL_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
         </div>
         <div className="crm-form-row">
           <div><FieldLabel>Phone</FieldLabel><input className="crm-input" value={form.phone} onChange={set('phone')} /></div>
