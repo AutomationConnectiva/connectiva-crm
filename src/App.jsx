@@ -1181,6 +1181,27 @@ function LeadsPage({ showToast, onOpenLead }) {
   const [activeOnly, setActiveOnly] = useState(true) // default on, per your call
   const [leadsPage, setLeadsPage] = useState(1)
 
+  // email_campaign_stage stores raw codes like "2.2" — meaningful to the
+  // automation, meaningless to anyone reading this table. systems_tables
+  // ('Email Outreach' rows) holds the human description for each code
+  // (config2 -> description); we fetch it once and use it purely for
+  // display, never write it back anywhere.
+  const [stageLabels, setStageLabels] = useState({})
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from('systems_tables')
+        .select('config2, description')
+        .eq('system_name', 'Email Outreach')
+      if (!error && data) {
+        const map = {}
+        data.forEach(r => { map[r.config2] = r.description })
+        setStageLabels(map)
+      }
+    })()
+  }, [])
+  const emailStageLabel = (code) => stageLabels[code] || code
+
   const fetchLeads = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -1248,7 +1269,7 @@ function LeadsPage({ showToast, onOpenLead }) {
                     <td><Badge value={l.nurture_stage} /></td>
                     <td>{l.owner || '—'}</td>
                        <td>{l.cold_calling ? <Badge value={l.cold_calling_stage || 'Not Pitched'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
-                       <td>{l.email_campaign ? <Badge value={l.email_campaign_stage || 'Queued'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
+                       <td>{l.email_campaign ? <Badge value={emailStageLabel(l.email_campaign_stage) || 'Queued'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
                        <td>{l.social_media ? <Badge value={l.social_media_stage || 'Queued'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
                     <td>
                       <button className="crm-icon-action" onClick={(e) => { e.stopPropagation(); onOpenLead(l.lead_id) }} aria-label="View details">
@@ -1526,6 +1547,25 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
   const [activities, setActivities] = useState([])
   const [activitiesLoading, setActivitiesLoading] = useState(true)
 
+  // Same code -> description lookup as the Leads table, so the email
+  // channel's stage badge reads "1st Email Campaign" instead of "2.2" here
+  // too — this card is shared by both the Lead detail page and the
+  // per-person embedded view, so the fix only needs to live in one place.
+  const [stageLabels, setStageLabels] = useState({})
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from('systems_tables')
+        .select('config2, description')
+        .eq('system_name', 'Email Outreach')
+      if (!error && data) {
+        const map = {}
+        data.forEach(r => { map[r.config2] = r.description })
+        setStageLabels(map)
+      }
+    })()
+  }, [])
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -1633,7 +1673,13 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
           <div className="crm-channel-grid">
             {CHANNEL_FIELDS.map(cf => {
               const boolValue = form[cf.boolKey]
-              const stageValue = lead[cf.key]
+              const rawStageValue = lead[cf.key]
+              // Only email_campaign_stage uses the numeric-code system —
+              // cold_calling_stage and social_media_stage are already
+              // written as plain readable strings by their automations.
+              const stageValue = cf.key === 'email_campaign_stage'
+                ? (stageLabels[rawStageValue] || rawStageValue)
+                : rawStageValue
               return (
                 <div key={cf.key} className="crm-channel-readonly">
                   <div className="crm-channel-readonly-head">
