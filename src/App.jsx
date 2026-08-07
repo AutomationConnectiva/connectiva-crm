@@ -96,6 +96,20 @@ function formatDateTime(d) {
   return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+// Normalizes a stored URL (e.g. LinkedIn) so it's always used as an ABSOLUTE
+// external link. Without this, a value like "linkedin.com/in/johndoe" (no
+// protocol) gets treated by the browser as a RELATIVE path on your own app's
+// domain when used directly as an <a href>, which is why clicking it looked
+// like it "redirected once then reopened the app" — it was just React Router
+// (or a full page load) navigating within connectiva-crm itself instead of
+// leaving the site.
+function externalUrl(u) {
+  if (!u) return null
+  const trimmed = u.trim()
+  if (!trimmed) return null
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+}
+
 const PAGE_SIZE = 15
 function paginate(items, page) {
   const start = (page - 1) * PAGE_SIZE
@@ -1023,7 +1037,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                       </td>
                       <td>{p.companies?.company_name || '—'}</td>
                       <td><input className="crm-cell-input" value={editForm.country} onChange={e => setEditForm({ ...editForm, country: e.target.value })} /></td>
-                      <td>{p.linkedin_url ? <a href={p.linkedin_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
+                      <td>{p.linkedin_url ? <a href={externalUrl(p.linkedin_url)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
                       <td><input className="crm-cell-input" value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })} /></td>
                       <td>
                         <div className="crm-row-actions">
@@ -1070,7 +1084,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                     <td>{p.industry || '—'}</td>
                     <td>{p.companies?.company_name || '—'}</td>
                     <td>{p.country || '—'}</td>
-                    <td>{p.linkedin_url ? <a href={p.linkedin_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
+                    <td>{p.linkedin_url ? <a href={externalUrl(p.linkedin_url)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
                     <td><Badge value={p.status} /></td>
                     {!selecting && (
                       <td>
