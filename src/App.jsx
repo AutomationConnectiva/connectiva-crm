@@ -3,7 +3,8 @@ import { supabase } from './lib/supabase'
 import {
   Users, UserPlus, Calendar, Target, Menu, X, Search,
   Clock, Check, Save, XCircle, Loader2,
-  UserCheck, Trash2, LogOut, ArrowLeft, Eye, Pencil, ChevronDown, ChevronUp, AlertTriangle
+  UserCheck, Trash2, LogOut, ArrowLeft, Eye, Pencil, ChevronDown, ChevronUp, AlertTriangle,
+  Mail, MessageSquare, Ban, History
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -15,6 +16,8 @@ const NURTURE_STAGE_OPTIONS = ['Cold', 'Warming', 'Outreach']
 const EVENT_STATUS_OPTIONS = ['Planned', 'Active', 'Completed', 'Cancelled']
 const PARTICIPANT_ROLE_OPTIONS = ['Attendee', 'Speaker', 'Sponsor', 'Organizer']
 const PARTICIPANT_STATUS_OPTIONS = ['Invited', 'Confirmed', 'Attended', 'Cancelled']
+// people.industry — confirmed against the live schema, three values in use.
+const INDUSTRY_OPTIONS = ['Insurance', 'Banking', 'Finance']
 
 // ---------------------------------------------------------------------------
 // CHANNEL CONTRACT — this must match what the Make.com scenarios actually
@@ -75,6 +78,10 @@ function initials(a, b) {
 function formatDate(d) {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+function formatDateTime(d) {
+  if (!d) return '—'
+  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
 const PAGE_SIZE = 15
@@ -191,7 +198,7 @@ const CSS = `
   .crm-icon-action.save { color: var(--accent-ink); border-color: var(--accent); }
   .crm-icon-action.cancel { color: var(--red); }
   .crm-badge { font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
-  .crm-lead-tag { font-size: 10.5px; font-weight: 600; color: var(--accent-ink); background: var(--accent-soft); padding: 2px 8px; border-radius: 999px; margin-left: 8px; }
+  .crm-lead-tag { font-size: 10.5px; font-weight: 600; color: var(--accent-ink); background: var(--accent-soft); padding: 2px 8px; border-radius: 999px; margin-left: 8px; white-space: nowrap; }
 
   .crm-spin { animation: crm-spin-kf 0.8s linear infinite; }
   @keyframes crm-spin-kf { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -255,6 +262,18 @@ const CSS = `
   .crm-channel-note { font-size: 11.5px; color: var(--ink-400); margin-top: 8px; line-height: 1.4; }
   .crm-warn-note { display: flex; align-items: flex-start; gap: 6px; font-size: 11.5px; color: var(--amber); background: var(--amber-soft); border-radius: 8px; padding: 6px 9px; margin-top: 6px; }
 
+  /* ---------- Activity timeline (Lead detail) ---------- */
+  .crm-activity-list { display: flex; flex-direction: column; }
+  .crm-activity-item { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .crm-activity-item:last-child { border-bottom: none; padding-bottom: 0; }
+  .crm-activity-item:first-child { padding-top: 0; }
+  .crm-activity-icon { width: 30px; height: 30px; border-radius: 999px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .crm-activity-body { flex: 1; min-width: 0; }
+  .crm-activity-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .crm-activity-type { font-size: 13px; font-weight: 600; color: var(--ink-950); }
+  .crm-activity-date { font-size: 11.5px; color: var(--ink-400); white-space: nowrap; flex-shrink: 0; }
+  .crm-activity-summary { font-size: 12.5px; color: var(--ink-700); margin-top: 3px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
   /* ---------- People page: side-by-side convert-to-lead panel ---------- */
   .crm-split-layout { display: flex; gap: 20px; align-items: flex-start; }
   .crm-split-main { flex: 1; min-width: 0; }
@@ -304,6 +323,30 @@ function Badge({ value }) {
   if (!value) return <span style={{ color: 'var(--ink-400)' }}>—</span>
   const tone = badgeTone(value)
   return <span className="crm-badge" style={{ background: tone.bg, color: tone.fg }}>{value}</span>
+}
+
+// ---------------------------------------------------------------------------
+// Activity timeline helpers — activity_type values are written by the
+// Make.com "Email Track Reply" scenario ('email_sent' from the send
+// scenario, 'Reply', 'Unsubscribe', 'Email Bounced' from the reply-tracking
+// one). Icon/tone mapping degrades gracefully (falls back to a generic
+// clock icon + neutral tone) for any future activity_type the automations
+// start writing that the CRM doesn't explicitly know about yet.
+// ---------------------------------------------------------------------------
+const ACTIVITY_ICON_MAP = {
+  email_sent: Mail,
+  'Reply': MessageSquare,
+  'Unsubscribe': Ban,
+  'Email Bounced': AlertTriangle,
+}
+function activityIcon(type) {
+  return ACTIVITY_ICON_MAP[type] || History
+}
+function activityTone(type) {
+  if (type === 'Email Bounced') return { bg: 'var(--red-soft)', fg: 'var(--red)' }
+  if (type === 'Unsubscribe') return { bg: 'var(--amber-soft)', fg: 'var(--amber)' }
+  if (type === 'Reply') return { bg: 'var(--accent-soft)', fg: 'var(--accent-ink)' }
+  return { bg: 'var(--line)', fg: 'var(--ink-700)' }
 }
 
 // Sticky bar that appears the instant one or more rows are selected, pinned
@@ -628,12 +671,18 @@ function SidebarContent({ collapsed, setCollapsed, activePage, goTo, onCloseMobi
 //  - a prominent "Convert to lead" button switches the whole table into a
 //    multi-select mode (checkboxes + sticky selection bar + confirm step),
 //    mirroring the Attendees "add people" flow, with sensible bulk defaults.
+//
+// Industry replaces Company as the primary at-a-glance column here — company
+// name still exists on the record (via company_id) but isn't the thing
+// people scan this table for; industry (Insurance / Banking / Finance) is,
+// and it's filterable.
 // ============================================================================
 function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarCollapsed }) {
   const [people, setPeople] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
+  const [industryFilter, setIndustryFilter] = useState('')
   const [peoplePage, setPeoplePage] = useState(1)
 
   // Existing leads, keyed by person_id -> Set of event_ids they're already
@@ -673,7 +722,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     setError(null)
     const { data, error } = await supabase
       .from('people')
-      .select('*, companies(company_name)')
+      .select('*')
       .order('created_at', { ascending: false })
     if (error) setError(error.message)
     else setPeople(data || [])
@@ -704,16 +753,16 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
-    if (!q) return people
     return people.filter(p => {
-      const companyName = p.companies?.company_name || ''
-      return `${p.first_name} ${p.last_name} ${p.email} ${p.job_title || ''} ${companyName} ${p.country || ''}`
+      if (industryFilter && p.industry !== industryFilter) return false
+      if (!q) return true
+      return `${p.first_name} ${p.last_name} ${p.email} ${p.job_title || ''} ${p.industry || ''} ${p.country || ''}`
         .toLowerCase()
         .includes(q)
     })
-  }, [people, search])
+  }, [people, search, industryFilter])
 
-  useEffect(() => { setPeoplePage(1) }, [search])
+  useEffect(() => { setPeoplePage(1) }, [search, industryFilter])
 
   // A person is off-limits for the currently selected event if they're
   // already a lead tied to that same event (or already a bare/no-event lead,
@@ -729,6 +778,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     setEditForm({
       first_name: p.first_name || '', last_name: p.last_name || '', email: p.email || '',
       job_title: p.job_title || '', country: p.country || '', status: p.status || '',
+      industry: p.industry || '',
     })
   }
   const cancelEdit = () => { setEditingId(null); setEditForm(null) }
@@ -889,8 +939,13 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
       <div className="crm-toolbar">
         <div className="crm-search-box">
           <Search size={15} style={{ color: 'var(--ink-400)' }} />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, email, company, title, country…" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, email, industry, title, country…" />
         </div>
+
+        <select className="crm-filter-select" value={industryFilter} onChange={e => setIndustryFilter(e.target.value)}>
+          <option value="">All industries</option>
+          {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
+        </select>
 
         {selecting ? (
           <>
@@ -923,7 +978,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 <th>Name</th>
                 <th>Email</th>
                 <th>Job title</th>
-                <th>Company</th>
+                <th>Industry</th>
                 <th>Country</th>
                 <th>Status</th>
                 {!selecting && <th></th>}
@@ -945,7 +1000,12 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                       </td>
                       <td><input className="crm-cell-input" value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} /></td>
                       <td><input className="crm-cell-input" value={editForm.job_title} onChange={e => setEditForm({ ...editForm, job_title: e.target.value })} /></td>
-                      <td>{p.companies?.company_name || '—'}</td>
+                      <td>
+                        <select className="crm-cell-select" value={editForm.industry} onChange={e => setEditForm({ ...editForm, industry: e.target.value })}>
+                          <option value="">—</option>
+                          {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
+                        </select>
+                      </td>
                       <td><input className="crm-cell-input" value={editForm.country} onChange={e => setEditForm({ ...editForm, country: e.target.value })} /></td>
                       <td><input className="crm-cell-input" value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })} /></td>
                       <td>
@@ -990,7 +1050,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                     </td>
                     <td>{p.email}</td>
                     <td>{p.job_title || '—'}</td>
-                    <td>{p.companies?.company_name || '—'}</td>
+                    <td>{p.industry || '—'}</td>
                     <td>{p.country || '—'}</td>
                     <td><Badge value={p.status} /></td>
                     {!selecting && (
@@ -1027,7 +1087,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
       return {
         id: p.person_id,
         primary: `${p.first_name} ${p.last_name}`,
-        secondary: `${p.email}${p.companies?.company_name ? ' · ' + p.companies.company_name : ''}`,
+        secondary: `${p.email}${p.industry ? ' · ' + p.industry : ''}`,
         warning: activeWarnings.length > 0 ? activeWarnings.join(' ') : null,
       }
     })
@@ -1245,6 +1305,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
         first_name: data.first_name || '', last_name: data.last_name || '', email: data.email || '',
         job_title: data.job_title || '', country: data.country || '', phone: data.phone || '',
         mobile: data.mobile || '', linkedin_url: data.linkedin_url || '', status: data.status || '',
+        industry: data.industry || '',
       })
       setCompany(data.companies ? { company_id: data.companies.company_id, company_name: data.companies.company_name } : null)
     }
@@ -1342,9 +1403,18 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
         <div><FieldLabel>Email</FieldLabel><input className="crm-input" value={form.email} onChange={set('email')} /></div>
         <div className="crm-form-row">
           <div><FieldLabel>Job title</FieldLabel><input className="crm-input" value={form.job_title} onChange={set('job_title')} /></div>
-          <div><FieldLabel>Country</FieldLabel><input className="crm-input" value={form.country} onChange={set('country')} /></div>
+          <div>
+            <FieldLabel>Industry</FieldLabel>
+            <select className="crm-select" value={form.industry} onChange={set('industry')}>
+              <option value="">—</option>
+              {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
+            </select>
+          </div>
         </div>
-        <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} /></div>
+        <div className="crm-form-row">
+          <div><FieldLabel>Country</FieldLabel><input className="crm-input" value={form.country} onChange={set('country')} /></div>
+          <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} /></div>
+        </div>
         <div className="crm-form-row">
           <div><FieldLabel>Phone</FieldLabel><input className="crm-input" value={form.phone} onChange={set('phone')} /></div>
           <div><FieldLabel>Mobile</FieldLabel><input className="crm-input" value={form.mobile} onChange={set('mobile')} /></div>
@@ -1434,6 +1504,12 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
 // (whether this channel should be pursued for the lead at all) — turning a
 // channel off is a legitimate "stop trying this on them" action and doesn't
 // require knowing the automation's internal state vocabulary.
+//
+// ACTIVITY TIMELINE: pulled from public.activities, filtered to this lead_id.
+// This is the audit trail the Make.com scenarios write to on every email
+// sent, reply logged, unsubscribe, and bounce — surfacing it here is the
+// only way to see, from inside the CRM, whether the automation is actually
+// working for a given lead without querying Supabase directly.
 // ============================================================================
 function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
   const [lead, setLead] = useState(null)
@@ -1441,6 +1517,9 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
   const [error, setError] = useState(null)
   const [form, setForm] = useState(null)
   const [saving, setSaving] = useState(false)
+
+  const [activities, setActivities] = useState([])
+  const [activitiesLoading, setActivitiesLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1464,7 +1543,18 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
     setLoading(false)
   }, [leadId])
 
-  useEffect(() => { load() }, [load])
+  const loadActivities = useCallback(async () => {
+    setActivitiesLoading(true)
+    const { data, error } = await supabase
+      .from('activities')
+      .select('*')
+      .eq('lead_id', leadId)
+      .order('activity_date', { ascending: false })
+    if (!error) setActivities(data || [])
+    setActivitiesLoading(false)
+  }, [leadId])
+
+  useEffect(() => { load(); loadActivities() }, [load, loadActivities])
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
   const toggleChannel = (boolKey) => setForm(prev => ({ ...prev, [boolKey]: !prev[boolKey] }))
@@ -1570,6 +1660,42 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
         <button className="crm-submit-btn" onClick={save} disabled={saving}>
           {saving ? <Loader2 size={15} className="crm-spin" /> : <Save size={15} />} Save changes
         </button>
+      </div>
+
+      <div style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid var(--line)' }}>
+        <h4 style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-950)', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <History size={14} /> Activity
+        </h4>
+        {activitiesLoading && (
+          <div className="crm-loading" style={{ padding: '16px 0' }}><Loader2 size={14} className="crm-spin" /> Loading activity…</div>
+        )}
+        {!activitiesLoading && activities.length === 0 && (
+          <div className="crm-confirm-empty" style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 24 }}>
+            Nothing logged yet — activity appears here once outreach starts.
+          </div>
+        )}
+        {!activitiesLoading && activities.length > 0 && (
+          <div className="crm-activity-list">
+            {activities.map(a => {
+              const Icon = activityIcon(a.activity_type)
+              const tone = activityTone(a.activity_type)
+              return (
+                <div key={a.activity_id} className="crm-activity-item">
+                  <div className="crm-activity-icon" style={{ background: tone.bg, color: tone.fg }}>
+                    <Icon size={14} />
+                  </div>
+                  <div className="crm-activity-body">
+                    <div className="crm-activity-top">
+                      <span className="crm-activity-type">{a.activity_type || 'Activity'}</span>
+                      <span className="crm-activity-date">{formatDateTime(a.activity_date)}</span>
+                    </div>
+                    {a.summary && <div className="crm-activity-summary">{a.summary}</div>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1729,8 +1855,16 @@ function EventsPage({ showToast }) {
 
 // ============================================================================
 // ATTENDEES — pick an event, manage who's already attached to it (edit-lock,
-// removable, paginated), and add more people via search/filter with
-// multi-select. Unchanged from before.
+// removable, paginated), and add more people via search/industry filter with
+// multi-select.
+//
+// Two additions here:
+//  - Candidate table shows Industry instead of Company, with a matching
+//    filter, mirroring the People page.
+//  - Anyone already attached to this event who ALSO has a lead tied to this
+//    exact event_id gets a "Lead" tag next to their name — this is a
+//    cross-reference against public.leads (event_id), not a guess, and
+//    re-fetches every time the selected event changes.
 // ============================================================================
 function AttendeesPage({ showToast }) {
   const [events, setEvents] = useState([])
@@ -1741,6 +1875,10 @@ function AttendeesPage({ showToast }) {
   const [participantsLoading, setParticipantsLoading] = useState(false)
   const [participantsPage, setParticipantsPage] = useState(1)
 
+  // person_ids that have a lead row with event_id = the currently selected
+  // event — drives the "Lead" tag in the participants table below.
+  const [leadPersonIdsForEvent, setLeadPersonIdsForEvent] = useState(new Set())
+
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -1749,6 +1887,7 @@ function AttendeesPage({ showToast }) {
   const [candidates, setCandidates] = useState([])
   const [candidatesLoading, setCandidatesLoading] = useState(false)
   const [candidateSearch, setCandidateSearch] = useState('')
+  const [candidateIndustryFilter, setCandidateIndustryFilter] = useState('')
   const [candidatePage, setCandidatePage] = useState(1)
   const [selectedPersonIds, setSelectedPersonIds] = useState(new Set())
   const [bulkRole, setBulkRole] = useState('Attendee')
@@ -1783,13 +1922,24 @@ function AttendeesPage({ showToast }) {
     setParticipantsLoading(false)
   }, [showToast])
 
+  // Cross-references leads for this same event so the participants table can
+  // flag "already a lead for this event" without a manual lookup elsewhere.
+  const fetchLeadsForEvent = useCallback(async (eventId) => {
+    if (!eventId) { setLeadPersonIdsForEvent(new Set()); return }
+    const { data, error } = await supabase.from('leads').select('person_id').eq('event_id', eventId)
+    if (!error) setLeadPersonIdsForEvent(new Set((data || []).map(r => r.person_id)))
+  }, [])
+
   useEffect(() => {
     setSelectedPersonIds(new Set())
     setAddStep('select')
     setCandidatePage(1)
     setParticipantsPage(1)
-    if (selectedEventId) fetchParticipants(selectedEventId)
-  }, [selectedEventId, fetchParticipants])
+    if (selectedEventId) {
+      fetchParticipants(selectedEventId)
+      fetchLeadsForEvent(selectedEventId)
+    }
+  }, [selectedEventId, fetchParticipants, fetchLeadsForEvent])
 
   useEffect(() => {
     if (!selectedEventId) return
@@ -1797,17 +1947,20 @@ function AttendeesPage({ showToast }) {
     ;(async () => {
       setCandidatesLoading(true)
       const existingIds = new Set(participants.map(p => p.person_id))
-      let query = supabase.from('people').select('person_id, first_name, last_name, email, job_title, country, company_id, companies(company_name)').limit(200)
+      let query = supabase.from('people').select('person_id, first_name, last_name, email, job_title, country, company_id, industry').limit(200)
       if (candidateSearch.trim()) {
         const q = candidateSearch.trim()
         query = query.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,email.ilike.%${q}%`)
+      }
+      if (candidateIndustryFilter) {
+        query = query.eq('industry', candidateIndustryFilter)
       }
       const { data, error } = await query
       if (error) showToast(`Couldn't load people: ${error.message}`, true)
       else setCandidates((data || []).filter(p => !existingIds.has(p.person_id)))
       setCandidatesLoading(false)
     })()
-  }, [selectedEventId, candidateSearch, participants, showToast])
+  }, [selectedEventId, candidateSearch, candidateIndustryFilter, participants, showToast])
 
   const togglePerson = (personId) => {
     setSelectedPersonIds(prev => {
@@ -1885,9 +2038,15 @@ function AttendeesPage({ showToast }) {
               {paginate(participants, participantsPage).map(p => {
                 const isEditing = editingId === p.participant_id
                 const name = `${p.people?.first_name || ''} ${p.people?.last_name || ''}`.trim() || '—'
+                const isLeadForThisEvent = leadPersonIdsForEvent.has(p.person_id)
                 return (
                   <tr key={p.participant_id} className={isEditing ? 'editing' : ''}>
-                    <td>{name}</td>
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        {name}
+                        {isLeadForThisEvent && <span className="crm-lead-tag">Lead</span>}
+                      </span>
+                    </td>
                     <td>{p.people?.email || '—'}</td>
                     <td>{p.companies?.company_name || '—'}</td>
                     {isEditing ? (
@@ -1947,7 +2106,7 @@ function AttendeesPage({ showToast }) {
               items={candidates.filter(c => selectedPersonIds.has(c.person_id)).map(c => ({
                 id: c.person_id,
                 primary: `${c.first_name} ${c.last_name}`,
-                secondary: `${c.email}${c.companies?.company_name ? ' · ' + c.companies.company_name : ''}`,
+                secondary: `${c.email}${c.industry ? ' · ' + c.industry : ''}`,
               }))}
               onRemove={(id) => togglePerson(id)}
               onConfirm={submitAdd}
@@ -1969,6 +2128,10 @@ function AttendeesPage({ showToast }) {
                   <Search size={15} style={{ color: 'var(--ink-400)' }} />
                   <input value={candidateSearch} onChange={e => setCandidateSearch(e.target.value)} placeholder="Filter by name or email…" />
                 </div>
+                <select className="crm-filter-select" value={candidateIndustryFilter} onChange={e => setCandidateIndustryFilter(e.target.value)}>
+                  <option value="">All industries</option>
+                  {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
+                </select>
                 <select className="crm-filter-select" value={bulkRole} onChange={e => setBulkRole(e.target.value)}>
                   {PARTICIPANT_ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
@@ -1984,7 +2147,7 @@ function AttendeesPage({ showToast }) {
               {!candidatesLoading && (
                 <div className="crm-table-wrap" style={{ marginBottom: 16 }}>
                   <table className="crm-table">
-                    <thead><tr>{['', 'Name', 'Email', 'Job title', 'Company', 'Country'].map(h => <th key={h}>{h}</th>)}</tr></thead>
+                    <thead><tr>{['', 'Name', 'Email', 'Job title', 'Industry', 'Country'].map(h => <th key={h}>{h}</th>)}</tr></thead>
                     <tbody>
                       {paginate(candidates, candidatePage).map(c => (
                         <tr key={c.person_id} onClick={() => togglePerson(c.person_id)} style={{ cursor: 'pointer' }}>
@@ -1992,7 +2155,7 @@ function AttendeesPage({ showToast }) {
                           <td>{c.first_name} {c.last_name}</td>
                           <td>{c.email}</td>
                           <td>{c.job_title || '—'}</td>
-                          <td>{c.companies?.company_name || '—'}</td>
+                          <td>{c.industry || '—'}</td>
                           <td>{c.country || '—'}</td>
                         </tr>
                       ))}
@@ -2089,7 +2252,7 @@ function CompanyPicker({ value, onChange }) {
 }
 
 function PersonForm({ showToast }) {
-  const [form, setForm] = useState({ first_name: '', last_name: '', email: '', job_title: '', country: '', phone: '', mobile: '', linkedin_url: '' })
+  const [form, setForm] = useState({ first_name: '', last_name: '', email: '', job_title: '', industry: '', country: '', phone: '', mobile: '', linkedin_url: '' })
   const [company, setCompany] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
@@ -2101,7 +2264,7 @@ function PersonForm({ showToast }) {
     const { error } = await supabase.from('people').insert({ ...form, company_id: company?.company_id || null })
     setSubmitting(false)
     if (error) { showToast(`Couldn't add person: ${error.message}`, true); return }
-    setForm({ first_name: '', last_name: '', email: '', job_title: '', country: '', phone: '', mobile: '', linkedin_url: '' })
+    setForm({ first_name: '', last_name: '', email: '', job_title: '', industry: '', country: '', phone: '', mobile: '', linkedin_url: '' })
     setCompany(null)
     showToast('Person added')
   }
@@ -2115,9 +2278,18 @@ function PersonForm({ showToast }) {
       <div><FieldLabel>Email</FieldLabel><input required type="email" value={form.email} onChange={set('email')} className="crm-input" /></div>
       <div className="crm-form-row">
         <div><FieldLabel>Job title</FieldLabel><input value={form.job_title} onChange={set('job_title')} className="crm-input" /></div>
-        <div><FieldLabel>Country</FieldLabel><input value={form.country} onChange={set('country')} className="crm-input" /></div>
+        <div>
+          <FieldLabel>Industry</FieldLabel>
+          <select value={form.industry} onChange={set('industry')} className="crm-select">
+            <option value="">—</option>
+            {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
+          </select>
+        </div>
       </div>
-      <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} /></div>
+      <div className="crm-form-row">
+        <div><FieldLabel>Country</FieldLabel><input value={form.country} onChange={set('country')} className="crm-input" /></div>
+        <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} /></div>
+      </div>
       <div className="crm-form-row">
         <div><FieldLabel>Phone</FieldLabel><input value={form.phone} onChange={set('phone')} className="crm-input" /></div>
         <div><FieldLabel>Mobile</FieldLabel><input value={form.mobile} onChange={set('mobile')} className="crm-input" /></div>
