@@ -2321,7 +2321,7 @@ function AttendeesPage({ showToast }) {
               {!candidatesLoading && (
                 <div className="crm-table-wrap" style={{ marginBottom: 16 }}>
                   <table className="crm-table">
-                    <thead><tr>{['', 'Name', 'Email', 'Job title', 'Stage', 'Industry', 'Country'].map(h => <th key={h}>{h}</th>)}</tr></thead>
+                    <thead><tr>{['', 'Name', 'Email', 'Job title', 'Industry', 'Country'].map(h => <th key={h}>{h}</th>)}</tr></thead>
                     <tbody>
                       {paginate(candidates, candidatePage).map(c => (
                         <tr key={c.person_id} onClick={() => togglePerson(c.person_id)} style={{ cursor: 'pointer' }}>
@@ -2329,12 +2329,11 @@ function AttendeesPage({ showToast }) {
                           <td>{c.first_name} {c.last_name}</td>
                           <td>{c.email}</td>
                           <td>{c.job_title || '—'}</td>
-                          <td><Badge value={c.stage} /></td>
                           <td>{c.industry || '—'}</td>
                           <td>{c.country || '—'}</td>
                         </tr>
                       ))}
-                      {candidates.length === 0 && <tr className="crm-empty-row"><td colSpan={7}>No leads match this filter (or they're all already on the event).</td></tr>}
+                      {candidates.length === 0 && <tr className="crm-empty-row"><td colSpan={6}>No leads match this filter (or they're all already on the event).</td></tr>}
                     </tbody>
                   </table>
                   <Pagination page={candidatePage} setPage={setCandidatePage} total={candidates.length} />
