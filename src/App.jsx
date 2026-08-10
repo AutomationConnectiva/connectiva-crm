@@ -2441,4 +2441,3 @@ function EventForm({ showToast }) {
     </form>
   )
 }
-
