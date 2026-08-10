@@ -1969,6 +1969,13 @@ function AttendeesPage({ showToast }) {
   // event — drives the "Lead" tag in the participants table below.
   const [leadPersonIdsForEvent, setLeadPersonIdsForEvent] = useState(new Set())
 
+  // person_id -> [{event_id, event_name, start_date, status}] for every OTHER
+  // event that person has been on event_participants for. This IS the
+  // attendance history — no separate table needed, event_participants already
+  // stores it, we're just querying across events instead of within one.
+  const [pastEventsByPerson, setPastEventsByPerson] = useState({})
+  const [pastEventsLoading, setPastEventsLoading] = useState(false)
+
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -2000,16 +2007,17 @@ function AttendeesPage({ showToast }) {
   }, [])
 
   const fetchParticipants = useCallback(async (eventId) => {
-    if (!eventId) return
+    if (!eventId) return []
     setParticipantsLoading(true)
     const { data, error } = await supabase
       .from('event_participants')
       .select('*, people(first_name, last_name, email), companies(company_name)')
       .eq('event_id', eventId)
       .order('created_at', { ascending: false })
-    if (error) showToast(`Couldn't load attendees: ${error.message}`, true)
-    else setParticipants(data || [])
+    if (error) { showToast(`Couldn't load attendees: ${error.message}`, true); setParticipantsLoading(false); return [] }
+    setParticipants(data || [])
     setParticipantsLoading(false)
+    return data || []
   }, [showToast])
 
   // Cross-references leads for this same event so the participants table can
@@ -2020,34 +2028,94 @@ function AttendeesPage({ showToast }) {
     if (!error) setLeadPersonIdsForEvent(new Set((data || []).map(r => r.person_id)))
   }, [])
 
+  // Pulls attendance history for the people currently shown, by looking at
+  // every OTHER event_participants row for those person_ids. Grouped client
+  // side into a person_id -> events[] map.
+  const fetchPastEvents = useCallback(async (eventId, personIds) => {
+    if (!eventId || !personIds || personIds.length === 0) { setPastEventsByPerson({}); return }
+    setPastEventsLoading(true)
+    const { data, error } = await supabase
+      .from('event_participants')
+      .select('person_id, status, events!inner(event_id, event_name, start_date)')
+      .in('person_id', personIds)
+      .neq('event_id', eventId)
+      .order('start_date', { ascending: false, foreignTable: 'events' })
+    setPastEventsLoading(false)
+    if (error) { showToast(`Couldn't load attendance history: ${error.message}`, true); return }
+    const map = {}
+    ;(data || []).forEach(row => {
+      if (!row.events) return
+      if (!map[row.person_id]) map[row.person_id] = []
+      map[row.person_id].push({
+        event_id: row.events.event_id,
+        event_name: row.events.event_name,
+        start_date: row.events.start_date,
+        status: row.status,
+      })
+    })
+    setPastEventsByPerson(map)
+  }, [showToast])
+
   useEffect(() => {
     setSelectedPersonIds(new Set())
     setAddStep('select')
     setCandidatePage(1)
     setParticipantsPage(1)
     if (selectedEventId) {
-      fetchParticipants(selectedEventId)
-      fetchLeadsForEvent(selectedEventId)
+      (async () => {
+        const rows = await fetchParticipants(selectedEventId)
+        fetchLeadsForEvent(selectedEventId)
+        fetchPastEvents(selectedEventId, rows.map(r => r.person_id))
+      })()
     }
-  }, [selectedEventId, fetchParticipants, fetchLeadsForEvent])
+  }, [selectedEventId, fetchParticipants, fetchLeadsForEvent, fetchPastEvents])
 
+  // Candidate pool is now the LEADS table (joined to people) instead of the
+  // full people table — so the "add to event" picker only surfaces people
+  // who are already qualified leads. Search/industry filtering happens
+  // client-side because PostgREST .or() doesn't reliably filter across an
+  // embedded relation like leads -> people.
   useEffect(() => {
     if (!selectedEventId) return
     setCandidatePage(1)
     ;(async () => {
       setCandidatesLoading(true)
       const existingIds = new Set(participants.map(p => p.person_id))
-      let query = supabase.from('people').select('person_id, first_name, last_name, email, job_title, country, company_id, industry').limit(200)
+      const { data, error } = await supabase
+        .from('leads')
+        .select('lead_id, person_id, nurture_stage, people(first_name, last_name, email, job_title, country, company_id, industry)')
+        .limit(500)
+      if (error) { showToast(`Couldn't load leads: ${error.message}`, true); setCandidatesLoading(false); return }
+
+      // Dedupe by person_id (a person can have more than one lead row across
+      // events) — keep the first one seen.
+      const seen = new Set()
+      let rows = (data || [])
+        .filter(l => l.people && !existingIds.has(l.person_id) && !seen.has(l.person_id) && seen.add(l.person_id))
+        .map(l => ({
+          person_id: l.person_id,
+          lead_id: l.lead_id,
+          stage: l.stage,
+          first_name: l.people.first_name,
+          last_name: l.people.last_name,
+          email: l.people.email,
+          job_title: l.people.job_title,
+          country: l.people.country,
+          company_id: l.people.company_id,
+          industry: l.people.industry,
+        }))
+
       if (candidateSearch.trim()) {
-        const q = candidateSearch.trim()
-        query = query.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,email.ilike.%${q}%`)
+        const q = candidateSearch.trim().toLowerCase()
+        rows = rows.filter(c =>
+          (c.first_name || '').toLowerCase().includes(q) ||
+          (c.last_name || '').toLowerCase().includes(q) ||
+          (c.email || '').toLowerCase().includes(q)
+        )
       }
-      if (candidateIndustryFilter) {
-        query = query.eq('industry', candidateIndustryFilter)
-      }
-      const { data, error } = await query
-      if (error) showToast(`Couldn't load people: ${error.message}`, true)
-      else setCandidates((data || []).filter(p => !existingIds.has(p.person_id)))
+      if (candidateIndustryFilter) rows = rows.filter(c => c.industry === candidateIndustryFilter)
+
+      setCandidates(rows)
       setCandidatesLoading(false)
     })()
   }, [selectedEventId, candidateSearch, candidateIndustryFilter, participants, showToast])
@@ -2081,7 +2149,8 @@ function AttendeesPage({ showToast }) {
     showToast(`${rows.length} ${rows.length === 1 ? 'person' : 'people'} added`)
     setSelectedPersonIds(new Set())
     setAddStep('select')
-    fetchParticipants(selectedEventId)
+    const updated = await fetchParticipants(selectedEventId)
+    fetchPastEvents(selectedEventId, updated.map(r => r.person_id))
   }
 
   const startEdit = (p) => {
@@ -2123,12 +2192,13 @@ function AttendeesPage({ showToast }) {
       {!participantsLoading && selectedEventId && (
         <div className="crm-table-wrap" style={{ marginBottom: 28 }}>
           <table className="crm-table">
-            <thead><tr>{['Name', 'Email', 'Company', 'Role', 'Status', ''].map(h => <th key={h}>{h}</th>)}</tr></thead>
+            <thead><tr>{['Name', 'Email', 'Company', 'Role', 'Status', 'Past Events', ''].map(h => <th key={h}>{h}</th>)}</tr></thead>
             <tbody>
               {paginate(participants, participantsPage).map(p => {
                 const isEditing = editingId === p.participant_id
                 const name = `${p.people?.first_name || ''} ${p.people?.last_name || ''}`.trim() || '—'
                 const isLeadForThisEvent = leadPersonIdsForEvent.has(p.person_id)
+                const history = pastEventsByPerson[p.person_id] || []
                 return (
                   <tr key={p.participant_id} className={isEditing ? 'editing' : ''}>
                     <td>
@@ -2151,7 +2221,7 @@ function AttendeesPage({ showToast }) {
                             {PARTICIPANT_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                           </select>
                         </td>
-                        <td>
+                        <td colSpan={2}>
                           <div className="crm-row-actions">
                             <button className="crm-icon-action save" onClick={() => saveEdit(p.participant_id)} disabled={saving} aria-label="Save">
                               {saving ? <Loader2 size={14} className="crm-spin" /> : <Save size={14} />}
@@ -2165,6 +2235,20 @@ function AttendeesPage({ showToast }) {
                         <td><Badge value={p.role} /></td>
                         <td><Badge value={p.status} /></td>
                         <td>
+                          {pastEventsLoading ? (
+                            <span className="crm-muted">…</span>
+                          ) : history.length === 0 ? (
+                            <span className="crm-muted">—</span>
+                          ) : (
+                            <span
+                              className="crm-history-tag"
+                              title={history.map(h => `${h.event_name} (${formatDate(h.start_date)}) — ${h.status || '—'}`).join('\n')}
+                            >
+                              {history.length} past event{history.length > 1 ? 's' : ''}
+                            </span>
+                          )}
+                        </td>
+                        <td>
                           <div className="crm-row-actions">
                             <button className="crm-icon-action" onClick={() => startEdit(p)} aria-label="Edit row"><Pencil size={14} /></button>
                             <button className="crm-icon-action cancel" onClick={() => removeParticipant(p.participant_id)} disabled={removingId === p.participant_id} aria-label="Remove">
@@ -2177,7 +2261,7 @@ function AttendeesPage({ showToast }) {
                   </tr>
                 )
               })}
-              {participants.length === 0 && <tr className="crm-empty-row"><td colSpan={6}>No one's attached to this event yet — add people below.</td></tr>}
+              {participants.length === 0 && <tr className="crm-empty-row"><td colSpan={7}>No one's attached to this event yet — add people below.</td></tr>}
             </tbody>
           </table>
           <Pagination page={participantsPage} setPage={setParticipantsPage} total={participants.length} />
@@ -2186,7 +2270,7 @@ function AttendeesPage({ showToast }) {
 
       {selectedEventId && (
         <div>
-          <h3 className="crm-display" style={{ fontSize: 18, margin: '0 0 12px' }}>Add people to this event</h3>
+          <h3 className="crm-display" style={{ fontSize: 18, margin: '0 0 12px' }}>Add leads to this event</h3>
 
           {addStep === 'confirm' ? (
             <ConfirmSelectionPanel
@@ -2233,11 +2317,11 @@ function AttendeesPage({ showToast }) {
                 <span className="crm-count-note">{selectedPersonIds.size} selected</span>
               </div>
 
-              {candidatesLoading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading people…</div>}
+              {candidatesLoading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading leads…</div>}
               {!candidatesLoading && (
                 <div className="crm-table-wrap" style={{ marginBottom: 16 }}>
                   <table className="crm-table">
-                    <thead><tr>{['', 'Name', 'Email', 'Job title', 'Industry', 'Country'].map(h => <th key={h}>{h}</th>)}</tr></thead>
+                    <thead><tr>{['', 'Name', 'Email', 'Job title', 'Stage', 'Industry', 'Country'].map(h => <th key={h}>{h}</th>)}</tr></thead>
                     <tbody>
                       {paginate(candidates, candidatePage).map(c => (
                         <tr key={c.person_id} onClick={() => togglePerson(c.person_id)} style={{ cursor: 'pointer' }}>
@@ -2245,11 +2329,12 @@ function AttendeesPage({ showToast }) {
                           <td>{c.first_name} {c.last_name}</td>
                           <td>{c.email}</td>
                           <td>{c.job_title || '—'}</td>
+                          <td><Badge value={c.stage} /></td>
                           <td>{c.industry || '—'}</td>
                           <td>{c.country || '—'}</td>
                         </tr>
                       ))}
-                      {candidates.length === 0 && <tr className="crm-empty-row"><td colSpan={6}>Everyone matching this filter is already on the event.</td></tr>}
+                      {candidates.length === 0 && <tr className="crm-empty-row"><td colSpan={7}>No leads match this filter (or they're all already on the event).</td></tr>}
                     </tbody>
                   </table>
                   <Pagination page={candidatePage} setPage={setCandidatePage} total={candidates.length} />
@@ -2262,85 +2347,6 @@ function AttendeesPage({ showToast }) {
     </div>
   )
 }
-
-// ============================================================================
-// CREATE — Event / Person forms matching the real schema. Lead creation now
-// lives entirely on the People page ("Convert to lead"), so there's no Lead
-// tab here — see the note below.
-// ============================================================================
-function CreatePage({ showToast }) {
-  const [tab, setTab] = useState('event')
-  return (
-    <div className="crm-create-wrap">
-      <div className="crm-tabs">
-        {[{ k: 'event', l: 'Event' }, { k: 'person', l: 'Person' }].map(t => (
-          <button key={t.k} onClick={() => setTab(t.k)} className={`crm-tab-btn${tab === t.k ? ' active' : ''}`}>{t.l}</button>
-        ))}
-      </div>
-      {tab === 'event' && <EventForm showToast={showToast} />}
-      {tab === 'person' && <PersonForm showToast={showToast} />}
-      <p style={{ fontSize: 12.5, color: 'var(--ink-400)', marginTop: 14 }}>
-        Want to create leads? Head to the People page and use "Convert to lead" — you can select multiple people at once from there.
-      </p>
-    </div>
-  )
-}
-
-function FieldLabel({ children }) {
-  return <label className="crm-field-label">{children}</label>
-}
-
-// Lightweight inline company search — types a name, gets matches, picks one.
-// Closes on outside click/blur so a stale result list doesn't linger.
-function CompanyPicker({ value, onChange }) {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
-  const [open, setOpen] = useState(false)
-  const wrapRef = useRef(null)
-
-  useEffect(() => {
-    if (!query.trim()) { setResults([]); return }
-    const t = setTimeout(async () => {
-      const { data } = await supabase.from('companies').select('company_id, company_name').ilike('company_name', `%${query}%`).limit(8)
-      setResults(data || [])
-    }, 250)
-    return () => clearTimeout(t)
-  }, [query])
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
-  return (
-    <div style={{ position: 'relative' }} ref={wrapRef}>
-      <input
-        className="crm-input"
-        placeholder="Search company by name…"
-        value={value ? value.company_name : query}
-        onChange={e => { onChange(null); setQuery(e.target.value); setOpen(true) }}
-        onFocus={() => setOpen(true)}
-      />
-      {open && results.length > 0 && (
-        <div style={{ position: 'absolute', zIndex: 10, top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid var(--line)', borderRadius: 10, marginTop: 4, maxHeight: 180, overflow: 'auto' }}>
-          {results.map(c => (
-            <div
-              key={c.company_id}
-              style={{ padding: '8px 12px', fontSize: 13, cursor: 'pointer' }}
-              onClick={() => { onChange(c); setQuery(''); setOpen(false) }}
-            >
-              {c.company_name}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function PersonForm({ showToast }) {
   const [form, setForm] = useState({ first_name: '', last_name: '', email: '', job_title: '', industry: '', country: '', phone: '', mobile: '', linkedin_url: '' })
   const [company, setCompany] = useState(null)
