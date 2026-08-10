@@ -300,23 +300,6 @@ const CSS = `
   .crm-activity-date { font-size: 11.5px; color: var(--ink-400); white-space: nowrap; flex-shrink: 0; }
   .crm-activity-summary { font-size: 12.5px; color: var(--ink-700); margin-top: 3px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
-  /* ---------- Activity table (Lead detail) — replaces the plain timeline above ---------- */
-  .crm-activity-table { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  .crm-activity-row { border-bottom: 1px solid var(--line); }
-  .crm-activity-row:last-child { border-bottom: none; }
-  .crm-activity-row-head { display: grid; grid-template-columns: 92px 1fr 70px 100px 1fr 18px; gap: 10px; align-items: center; padding: 10px 14px; cursor: pointer; }
-  .crm-activity-row-head:hover { background: #FAFAF8; }
-  .crm-activity-row-head.expanded { background: var(--accent-soft); }
-  .crm-activity-col { font-size: 12px; color: var(--ink-700); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .crm-activity-col-date { font-size: 11.5px; color: var(--ink-400); }
-  .crm-activity-row-body { padding: 0 14px 14px 14px; background: var(--paper); }
-  .crm-activity-content { font-size: 12.5px; color: var(--ink-700); line-height: 1.6; white-space: pre-wrap; max-height: 260px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
-  .crm-activity-meta-badges { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
-  @media (max-width: 640px) {
-    .crm-activity-row-head { grid-template-columns: 1fr 1fr 18px; }
-    .crm-activity-col-sender, .crm-activity-col-event { display: none; }
-  }
-
   /* ---------- People page: side-by-side convert-to-lead panel ---------- */
   .crm-split-layout { display: flex; gap: 20px; align-items: flex-start; }
   .crm-split-main { flex: 1; min-width: 0; }
@@ -390,38 +373,6 @@ function activityTone(type) {
   if (type === 'Unsubscribe') return { bg: 'var(--amber-soft)', fg: 'var(--amber)' }
   if (type === 'Reply') return { bg: 'var(--accent-soft)', fg: 'var(--accent-ink)' }
   return { bg: 'var(--line)', fg: 'var(--ink-700)' }
-}
-
-// Channel + action helpers for the redesigned activity table. "Channel" is
-// the coarse outreach medium (Email / Call); "action" is what happened on
-// that channel for this specific row. call_outcome is an overloaded column
-// coming from the Vapi automation: a numeric string is a connected call's
-// duration in seconds, a non-numeric string is a failure/skip reason (e.g.
-// "customer-did-not-answer") — never both, so we branch on Number() parsing.
-function activityChannel(type) {
-  if (type === 'Vapi Call') return 'Call'
-  if (type === 'email_sent' || type === 'Reply' || type === 'Unsubscribe') return 'Email'
-  return type || '—'
-}
-function formatCallDuration(seconds) {
-  const s = Math.round(seconds)
-  const m = Math.floor(s / 60)
-  const r = s % 60
-  return m > 0 ? `${m}m ${r}s` : `${r}s`
-}
-function activityAction(a) {
-  switch (a.activity_type) {
-    case 'email_sent': return 'Sent'
-    case 'Reply': return 'Replied'
-    case 'Unsubscribe': return 'Unsubscribed'
-    case 'Vapi Call': {
-      const raw = (a.call_outcome || '').toString().trim()
-      if (!raw) return '—'
-      const num = Number(raw)
-      return Number.isNaN(num) ? raw : formatCallDuration(num)
-    }
-    default: return a.activity_type || '—'
-  }
 }
 
 // Sticky bar that appears the instant one or more rows are selected, pinned
@@ -1619,13 +1570,11 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
 // channel off is a legitimate "stop trying this on them" action and doesn't
 // require knowing the automation's internal state vocabulary.
 //
-// ACTIVITY TABLE: pulled from public.activities, filtered to this lead_id.
+// ACTIVITY TIMELINE: pulled from public.activities, filtered to this lead_id.
 // This is the audit trail the Make.com scenarios write to on every email
 // sent, reply logged, unsubscribe, and bounce — surfacing it here is the
 // only way to see, from inside the CRM, whether the automation is actually
-// working for a given lead without querying Supabase directly. Rows are
-// collapsed by default (Date | Event | Channel | Outcome | Sent by) and
-// expand on click to reveal the full transcript/summary plus sentiment.
+// working for a given lead without querying Supabase directly.
 // ============================================================================
 function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
   const [lead, setLead] = useState(null)
@@ -1636,7 +1585,6 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
 
   const [activities, setActivities] = useState([])
   const [activitiesLoading, setActivitiesLoading] = useState(true)
-  const [expandedActivityId, setExpandedActivityId] = useState(null)
 
   // Same code -> description lookup as the Leads table, so the email
   // channel's stage badge reads "1st Email Campaign" instead of "2.2" here
@@ -1657,28 +1605,12 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
     })()
   }, [])
 
-  // event_id -> event_name lookup for the activity table. Activity rows
-  // carry their own event_id (not necessarily the same as the lead's own
-  // event_id), so this is fetched independently rather than reused from the
-  // lead's joined `events` field.
-  const [eventNameMap, setEventNameMap] = useState({})
-  useEffect(() => {
-    (async () => {
-      const { data, error } = await supabase.from('events').select('event_id, event_name')
-      if (!error && data) {
-        const map = {}
-        data.forEach(e => { map[e.event_id] = e.event_name })
-        setEventNameMap(map)
-      }
-    })()
-  }, [])
-
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     const { data, error } = await supabase
       .from('leads')
-      .select('*, people(person_id, first_name, last_name, email, mobile, phone, owner_email), companies(company_name), events(event_name)')
+      .select('*, people(person_id, first_name, last_name, email, mobile, phone), companies(company_name), events(event_name)')
       .eq('lead_id', leadId)
       .single()
     if (error) setError(error.message)
@@ -1833,42 +1765,22 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
           </div>
         )}
         {!activitiesLoading && activities.length > 0 && (
-          <div className="crm-activity-table">
+          <div className="crm-activity-list">
             {activities.map(a => {
-              const isOpen = expandedActivityId === a.activity_id
-              const channel = activityChannel(a.activity_type)
-              const action = activityAction(a)
+              const Icon = activityIcon(a.activity_type)
               const tone = activityTone(a.activity_type)
-              const eventName = eventNameMap[a.event_id] || (a.event_id ? a.event_id : '—')
-              const senderEmail = lead.people?.owner_email || '—'
               return (
-                <div key={a.activity_id} className="crm-activity-row">
-                  <div
-                    className={`crm-activity-row-head${isOpen ? ' expanded' : ''}`}
-                    onClick={() => setExpandedActivityId(isOpen ? null : a.activity_id)}
-                  >
-                    <span className="crm-activity-col crm-activity-col-date">{formatDateTime(a.activity_date)}</span>
-                    <span className="crm-activity-col crm-activity-col-event">{eventName}</span>
-                    <span className="crm-badge" style={{ background: tone.bg, color: tone.fg, justifySelf: 'start' }}>{channel}</span>
-                    <span className="crm-activity-col">{action}</span>
-                    <span className="crm-activity-col crm-activity-col-sender">{senderEmail}</span>
-                    {isOpen ? <ChevronUp size={14} color="var(--ink-400)" /> : <ChevronDown size={14} color="var(--ink-400)" />}
+                <div key={a.activity_id} className="crm-activity-item">
+                  <div className="crm-activity-icon" style={{ background: tone.bg, color: tone.fg }}>
+                    <Icon size={14} />
                   </div>
-                  {isOpen && (
-                    <div className="crm-activity-row-body">
-                      {a.summary ? (
-                        <div className="crm-activity-content">{a.summary}</div>
-                      ) : (
-                        <div style={{ fontSize: 12.5, color: 'var(--ink-400)', paddingBottom: 10 }}>No content logged for this activity.</div>
-                      )}
-                      {(a.interest || a.sentiment_analysis) && (
-                        <div className="crm-activity-meta-badges">
-                          {a.interest && <Badge value={a.interest} />}
-                          {a.sentiment_analysis && <span style={{ fontSize: 11.5, color: 'var(--ink-400)' }}>{a.sentiment_analysis}</span>}
-                        </div>
-                      )}
+                  <div className="crm-activity-body">
+                    <div className="crm-activity-top">
+                      <span className="crm-activity-type">{a.activity_type || 'Activity'}</span>
+                      <span className="crm-activity-date">{formatDateTime(a.activity_date)}</span>
                     </div>
-                  )}
+                    {a.summary && <div className="crm-activity-summary">{a.summary}</div>}
+                  </div>
                 </div>
               )
             })}
@@ -2529,3 +2441,4 @@ function EventForm({ showToast }) {
     </form>
   )
 }
+
