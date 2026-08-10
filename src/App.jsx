@@ -126,6 +126,47 @@ function Pagination({ page, setPage, total }) {
   )
 }
 
+function FieldLabel({ children }) {
+  return <label className="crm-field-label">{children}</label>
+}
+
+function CompanyPicker({ value, onChange }) {
+  const [query, setQuery] = useState(value?.company_name || '')
+  return (
+    <input
+      className="crm-input"
+      value={query}
+      placeholder="Company name"
+      onChange={e => {
+        setQuery(e.target.value)
+        onChange(e.target.value ? { company_id: null, company_name: e.target.value } : null)
+      }}
+    />
+  )
+}
+
+function CreatePage({ showToast }) {
+  const [tab, setTab] = useState('person')
+  return (
+    <div className="crm-create-wrap">
+      <div className="crm-tabs">
+        <button
+          className={`crm-tab-btn${tab === 'person' ? ' active' : ''}`}
+          onClick={() => setTab('person')}
+        >
+          Person
+        </button>
+        <button
+          className={`crm-tab-btn${tab === 'event' ? ' active' : ''}`}
+          onClick={() => setTab('event')}
+        >
+          Event
+        </button>
+      </div>
+      {tab === 'person' ? <PersonForm showToast={showToast} /> : <EventForm showToast={showToast} />}
+    </div>
+  )
+}
 // ---------------------------------------------------------------------------
 // Styles — plain CSS, no Tailwind dependency.
 // ---------------------------------------------------------------------------
@@ -225,7 +266,16 @@ const CSS = `
   .crm-icon-action.cancel { color: var(--red); }
   .crm-badge { font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
   .crm-lead-tag { font-size: 10.5px; font-weight: 600; color: var(--accent-ink); background: var(--accent-soft); padding: 2px 8px; border-radius: 999px; margin-left: 8px; white-space: nowrap; }
-
+  .crm-muted { color: var(--ink-400); font-size: 12.5px; }
+  .crm-history-tag {
+    font-size: 11.5px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    color: var(--ink-700);
+    cursor: help;
+  }
   .crm-spin { animation: crm-spin-kf 0.8s linear infinite; }
   @keyframes crm-spin-kf { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
