@@ -1138,28 +1138,23 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 // Shared "Past Events" cell — same rendering whether the row
                 // is in edit mode or not. Shows event_id + role explicitly,
                 // one small tag per event, instead of a hidden-in-tooltip count.
-                const pastEventsCell = (
-                  <td>
-                    {pastEventsLoading ? (
-                      <span className="crm-muted">…</span>
-                    ) : history.length === 0 ? (
-                      <span className="crm-muted">—</span>
-                    ) : (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                        {history.map((h, i) => (
-                          <span
-                            key={i}
-                            className="crm-history-tag"
-                            title={`${h.event_name} (${formatDate(h.start_date)}) — ${h.status || '—'}`}
-                          >
-                            {h.event_id} · {h.role || '—'}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                )
-
+               const pastEventsCell = (
+               <td>
+                 {pastEventsLoading ? (
+                 <span className="crm-muted">…</span>
+                  ) : history.length === 0 ? (
+                 <span className="crm-muted">—</span>
+                ) : (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {history.map((h, i) => (
+         <span key={i} title={`${h.event_name} (${formatDate(h.start_date)}) — ${h.status || '—'}`}>
+         {h.event_id} · {h.role || '—'}{i < history.length - 1 ? ',' : ''}
+    </span>
+        ))}
+      </div>
+    )}
+  </td>
+)
                 if (isEditing) {
                   return (
                     <tr key={p.person_id} className="editing">
