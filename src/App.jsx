@@ -1133,6 +1133,7 @@ const LEAD_PURPOSE_OPTIONS = useMemo(() => {
                 <th>Company</th>
                 <th>Country</th>
                 <th>LinkedIn</th>
+                <th>Lead Purpose</th>
                 <th>Status</th>
                 <th>Past Events</th>
                 {!selecting && <th></th>}
@@ -1148,14 +1149,20 @@ const LEAD_PURPOSE_OPTIONS = useMemo(() => {
                     {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
                   </select>
                 </th>
-                <th><input className="crm-cell-input" value={columnFilters.company} onChange={setColFilter('company')} placeholder="Filter…" /></th>
-                <th><input className="crm-cell-input" value={columnFilters.country} onChange={setColFilter('country')} placeholder="Filter…" /></th>
-                <th></th>
-                <th>
-                  <select className="crm-cell-select" value={columnFilters.status} onChange={setColFilter('status')}>
-                    <option value="">All</option>
-                    {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
+               <th><input className="crm-cell-input" value={columnFilters.company} onChange={setColFilter('company')} placeholder="Filter…" /></th>
+              <th><input className="crm-cell-input" value={columnFilters.country} onChange={setColFilter('country')} placeholder="Filter…" /></th>
+             <th></th>
+             <th>
+            <select className="crm-cell-select" value={columnFilters.lead_purpose} onChange={setColFilter('lead_purpose')}>
+             <option value="">All</option>
+               {LEAD_PURPOSE_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+             </select>
+        </th>
+<th>
+  <select className="crm-cell-select" value={columnFilters.status} onChange={setColFilter('status')}>
+    <option value="">All</option>
+    {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+  </select>
                 </th>
                 <th></th>
                 {!selecting && <th></th>}
