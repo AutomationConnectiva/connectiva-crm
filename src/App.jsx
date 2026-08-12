@@ -757,11 +757,12 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   const [people, setPeople] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [search, setSearch] = useState('')
-  const [industryFilter, setIndustryFilter] = useState('')
-  const [jobTitleFilter, setJobTitleFilter] = useState('')
-  const [leadPurposeFilter, setLeadPurposeFilter] = useState('')
   const [peoplePage, setPeoplePage] = useState(1)
+
+  const [columnFilters, setColumnFilters] = useState({
+  name: '', email: '', job_title: '', industry: '', company: '', country: '', status: '',
+})
+const setColFilter = (key) => (e) => setColumnFilters(prev => ({ ...prev, [key]: e.target.value }))
 
   // Existing leads, keyed by person_id -> Set of event_ids they're already
   // linked to (a bare lead with no event uses the 'NONE' key). Drives both
@@ -869,23 +870,28 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   // Job title / lead purpose are free-text LIKE '%filter%' searches per
   // your boss's request — substring, case-insensitive, not exact-match
   // dropdowns (job titles are too varied/messy for a fixed list to be useful).
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase().trim()
-    const jt = jobTitleFilter.toLowerCase().trim()
-    const lp = leadPurposeFilter.toLowerCase().trim()
-    return people.filter(p => {
-      if (industryFilter && p.industry !== industryFilter) return false
-      if (jt && !(p.job_title || '').toLowerCase().includes(jt)) return false
-      if (lp && !(p.lead_purpose || '').toLowerCase().includes(lp)) return false
-      if (!q) return true
-      const companyName = p.companies?.company_name || ''
-      return `${p.first_name} ${p.last_name} ${p.email} ${p.job_title || ''} ${p.industry || ''} ${companyName} ${p.country || ''}`
-        .toLowerCase()
-        .includes(q)
-    })
-  }, [people, search, industryFilter, jobTitleFilter, leadPurposeFilter])
+const filtered = useMemo(() => {
+  const f = columnFilters
+  const name = f.name.toLowerCase().trim()
+  const email = f.email.toLowerCase().trim()
+  const jt = f.job_title.toLowerCase().trim()
+  const company = f.company.toLowerCase().trim()
+  const country = f.country.toLowerCase().trim()
+  const status = f.status.toLowerCase().trim()
+  return people.filter(p => {
+    const companyName = p.companies?.company_name || ''
+    if (name && !`${p.first_name} ${p.last_name}`.toLowerCase().includes(name)) return false
+    if (email && !(p.email || '').toLowerCase().includes(email)) return false
+    if (jt && !(p.job_title || '').toLowerCase().includes(jt)) return false
+    if (f.industry && p.industry !== f.industry) return false
+    if (company && !companyName.toLowerCase().includes(company)) return false
+    if (country && !(p.country || '').toLowerCase().includes(country)) return false
+    if (status && !(p.status || '').toLowerCase().includes(status)) return false
+    return true
+  })
+}, [people, columnFilters])
 
-  useEffect(() => { setPeoplePage(1) }, [search, industryFilter, jobTitleFilter, leadPurposeFilter])
+  useEffect(() => { setPeoplePage(1) }, [columnFilters])
 
   // A person is off-limits for the currently selected event if they're
   // already a lead tied to that same event (or already a bare/no-event lead,
@@ -1060,50 +1066,23 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
 
   const table = (
     <div>
-      <div className="crm-toolbar">
-        <div className="crm-search-box">
-          <Search size={15} style={{ color: 'var(--ink-400)' }} />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, email, industry, title, country…" />
-        </div>
-
-        <select className="crm-filter-select" value={industryFilter} onChange={e => setIndustryFilter(e.target.value)}>
-          <option value="">All industries</option>
-          {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
-        </select>
-
-        <input
-          className="crm-input"
-          style={{ maxWidth: 170 }}
-          value={jobTitleFilter}
-          onChange={e => setJobTitleFilter(e.target.value)}
-          placeholder="Filter job title…"
-        />
-
-        <input
-          className="crm-input"
-          style={{ maxWidth: 170 }}
-          value={leadPurposeFilter}
-          onChange={e => setLeadPurposeFilter(e.target.value)}
-          placeholder="Filter lead purpose…"
-        />
-
-        {selecting ? (
-          <>
-            <select className="crm-filter-select" value={linkEventId} onChange={handleLinkEventChange} disabled={eventsLoading}>
-              <option value="">No event (general lead)</option>
-              {events.map(e => <option key={e.event_id} value={e.event_id}>{e.event_name} ({formatDate(e.start_date)})</option>)}
-            </select>
-            <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({filtered.filter(p => !isAlreadyLeadForEvent(p.person_id)).length})</button>
-            {selectedPersonIds.size > 0 && <button className="crm-toggle-chip" onClick={clearSelection}>Clear selection</button>}
-            <button className="crm-btn-secondary" onClick={cancelConvert}>Cancel</button>
-          </>
-        ) : (
-          <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 18px' }} onClick={startConvert}>
-            <UserPlus size={15} /> Convert to lead
-          </button>
-        )}
-
-        <span className="crm-count-note">{filtered.length} of {people.length}</span>
+    <div className="crm-toolbar">
+  {selecting ? (
+    <>
+      <select className="crm-filter-select" value={linkEventId} onChange={handleLinkEventChange} disabled={eventsLoading}>
+        <option value="">No event (general lead)</option>
+        {events.map(e => <option key={e.event_id} value={e.event_id}>{e.event_name} ({formatDate(e.start_date)})</option>)}
+      </select>
+      <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({filtered.filter(p => !isAlreadyLeadForEvent(p.person_id)).length})</button>
+      {selectedPersonIds.size > 0 && <button className="crm-toggle-chip" onClick={clearSelection}>Clear selection</button>}
+      <button className="crm-btn-secondary" onClick={cancelConvert}>Cancel</button>
+    </>
+  ) : (
+    <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 18px' }} onClick={startConvert}>
+      <UserPlus size={15} /> Convert to lead
+    </button>
+  )}
+  <span className="crm-count-note">{filtered.length} of {people.length}</span>
       </div>
 
       {loading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading people…</div>}
@@ -1112,21 +1091,39 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
       {!loading && !error && (
         <div className="crm-table-wrap">
           <table className="crm-table">
-            <thead>
-              <tr>
-                {selecting && <th style={{ width: 36 }}></th>}
-                <th>Name</th>
-                <th>Email</th>
-                <th>Job title</th>
-                <th>Industry</th>
-                <th>Company</th>
-                <th>Country</th>
-                <th>LinkedIn</th>
-                <th>Status</th>
-                <th>Past Events</th>
-                {!selecting && <th></th>}
-              </tr>
-            </thead>
+           <thead>
+  <tr>
+    {selecting && <th style={{ width: 36 }}></th>}
+    <th>Name</th>
+    <th>Email</th>
+    <th>Job title</th>
+    <th>Industry</th>
+    <th>Company</th>
+    <th>Country</th>
+    <th>LinkedIn</th>
+    <th>Status</th>
+    <th>Past Events</th>
+    {!selecting && <th></th>}
+  </tr>
+  <tr>
+    {selecting && <th></th>}
+    <th><input className="crm-cell-input" value={columnFilters.name} onChange={setColFilter('name')} placeholder="Filter…" /></th>
+    <th><input className="crm-cell-input" value={columnFilters.email} onChange={setColFilter('email')} placeholder="Filter…" /></th>
+    <th><input className="crm-cell-input" value={columnFilters.job_title} onChange={setColFilter('job_title')} placeholder="Filter…" /></th>
+    <th>
+      <select className="crm-cell-select" value={columnFilters.industry} onChange={setColFilter('industry')}>
+        <option value="">All</option>
+        {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
+      </select>
+    </th>
+    <th><input className="crm-cell-input" value={columnFilters.company} onChange={setColFilter('company')} placeholder="Filter…" /></th>
+    <th><input className="crm-cell-input" value={columnFilters.country} onChange={setColFilter('country')} placeholder="Filter…" /></th>
+    <th></th>
+    <th><input className="crm-cell-input" value={columnFilters.status} onChange={setColFilter('status')} placeholder="Filter…" /></th>
+    <th></th>
+    {!selecting && <th></th>}
+  </tr>
+</thead>
             <tbody>
               {paginate(filtered, peoplePage).map(p => {
                 const av = avatarStyle(p.first_name + p.last_name)
