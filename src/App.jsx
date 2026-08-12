@@ -1128,6 +1128,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
             <thead>
               <tr>
                 {selecting && <th style={{ width: 36 }}></th>}
+                {selecting && <th style={{ width: 64 }}></th>}
                 <th>Name</th>
                 <th>Email</th>
                 <th>Job title</th>
@@ -1140,6 +1141,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 {!selecting && <th></th>}
               </tr>
               <tr>
+                {selecting && <th></th>}
                 {selecting && <th></th>}
                 <th><input className="crm-cell-input" value={columnFilters.name} onChange={setColFilter('name')} placeholder="Filter…" /></th>
                 <th><input className="crm-cell-input" value={columnFilters.email} onChange={setColFilter('email')} placeholder="Filter…" /></th>
@@ -1167,7 +1169,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
               {paginate(filtered, peoplePage).map(p => {
                 const av = avatarStyle(p.first_name + p.last_name)
                 const alreadyLead = leadPersonIds.has(p.person_id)
-                const isEditing = !selecting && editingId === p.person_id
+                const isEditing = editingId === p.person_id
                 const disabledForEvent = selecting && isAlreadyLeadForEvent(p.person_id)
                 const history = pastEventsByPerson[p.person_id] || []
 
