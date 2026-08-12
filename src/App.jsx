@@ -2334,7 +2334,7 @@ function AttendeesPage({ showToast }) {
         .map(l => ({
           person_id: l.person_id,
           lead_id: l.lead_id,
-          stage: l.stage,
+          stage: l.nurture_stage,
           first_name: l.people.first_name,
           last_name: l.people.last_name,
           email: l.people.email,
