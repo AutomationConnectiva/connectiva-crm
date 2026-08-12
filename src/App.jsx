@@ -759,10 +759,22 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   const [error, setError] = useState(null)
   const [peoplePage, setPeoplePage] = useState(1)
 
+  // TODO: replace with the real values from your DB. Run in Supabase SQL editor:
+  //   select distinct status from people order by status;
+  // or, if `status` is a Postgres enum type:
+  //   select unnest(enum_range(null::your_status_enum_name))::text as status;
+  const STATUS_OPTIONS = useMemo(() => {
+  const set = new Set(people.map(p => p.status).filter(Boolean))
+  return Array.from(set).sort()
+  }, [people])
+  
+  const LEAD_PURPOSE_OPTIONS = ['Delegate acquisition', 'Sponsor acquisition', 'Speaker acquisition']
+
   const [columnFilters, setColumnFilters] = useState({
-  name: '', email: '', job_title: '', industry: '', company: '', country: '', status: '',
-})
-const setColFilter = (key) => (e) => setColumnFilters(prev => ({ ...prev, [key]: e.target.value }))
+    name: '', email: '', job_title: '', industry: '', company: '', country: '', status: '',
+  })
+  const [leadPurposeFilter, setLeadPurposeFilter] = useState('')
+  const setColFilter = (key) => (e) => setColumnFilters(prev => ({ ...prev, [key]: e.target.value }))
 
   // Existing leads, keyed by person_id -> Set of event_ids they're already
   // linked to (a bare lead with no event uses the 'NONE' key). Drives both
@@ -867,31 +879,33 @@ const setColFilter = (key) => (e) => setColumnFilters(prev => ({ ...prev, [key]:
     fetchPeople(); fetchLeadEventMap(); fetchEvents(); fetchPastEvents()
   }, [fetchPeople, fetchLeadEventMap, fetchEvents, fetchPastEvents])
 
-  // Job title / lead purpose are free-text LIKE '%filter%' searches per
-  // your boss's request — substring, case-insensitive, not exact-match
-  // dropdowns (job titles are too varied/messy for a fixed list to be useful).
-const filtered = useMemo(() => {
-  const f = columnFilters
-  const name = f.name.toLowerCase().trim()
-  const email = f.email.toLowerCase().trim()
-  const jt = f.job_title.toLowerCase().trim()
-  const company = f.company.toLowerCase().trim()
-  const country = f.country.toLowerCase().trim()
-  const status = f.status.toLowerCase().trim()
-  return people.filter(p => {
-    const companyName = p.companies?.company_name || ''
-    if (name && !`${p.first_name} ${p.last_name}`.toLowerCase().includes(name)) return false
-    if (email && !(p.email || '').toLowerCase().includes(email)) return false
-    if (jt && !(p.job_title || '').toLowerCase().includes(jt)) return false
-    if (f.industry && p.industry !== f.industry) return false
-    if (company && !companyName.toLowerCase().includes(company)) return false
-    if (country && !(p.country || '').toLowerCase().includes(country)) return false
-    if (status && !(p.status || '').toLowerCase().includes(status)) return false
-    return true
-  })
-}, [people, columnFilters])
+  // Job title / company / country stay free-text LIKE '%filter%' searches.
+  // Industry, status, and lead purpose are exact-match dropdowns since
+  // they're fixed sets of values in the DB.
+  const filtered = useMemo(() => {
+    const f = columnFilters
+    const name = f.name.toLowerCase().trim()
+    const email = f.email.toLowerCase().trim()
+    const jt = f.job_title.toLowerCase().trim()
+    const company = f.company.toLowerCase().trim()
+    const country = f.country.toLowerCase().trim()
+    return people.filter(p => {
+      const companyName = p.companies?.company_name || ''
+      if (name && !`${p.first_name} ${p.last_name}`.toLowerCase().includes(name)) return false
+      if (email && !(p.email || '').toLowerCase().includes(email)) return false
+      if (jt && !(p.job_title || '').toLowerCase().includes(jt)) return false
+      if (f.industry && p.industry !== f.industry) return false
+      if (company && !companyName.toLowerCase().includes(company)) return false
+      if (country && !(p.country || '').toLowerCase().includes(country)) return false
+      if (f.status && p.status !== f.status) return false
+      // TODO: confirm the real field name/path for lead purpose on `p`
+      // (e.g. p.lead_purpose vs a nested join like p.leads?.purpose).
+      if (leadPurposeFilter && p.lead_purpose !== leadPurposeFilter) return false
+      return true
+    })
+  }, [people, columnFilters, leadPurposeFilter])
 
-  useEffect(() => { setPeoplePage(1) }, [columnFilters])
+  useEffect(() => { setPeoplePage(1) }, [columnFilters, leadPurposeFilter])
 
   // A person is off-limits for the currently selected event if they're
   // already a lead tied to that same event (or already a bare/no-event lead,
@@ -1066,23 +1080,29 @@ const filtered = useMemo(() => {
 
   const table = (
     <div>
-    <div className="crm-toolbar">
-  {selecting ? (
-    <>
-      <select className="crm-filter-select" value={linkEventId} onChange={handleLinkEventChange} disabled={eventsLoading}>
-        <option value="">No event (general lead)</option>
-        {events.map(e => <option key={e.event_id} value={e.event_id}>{e.event_name} ({formatDate(e.start_date)})</option>)}
-      </select>
-      <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({filtered.filter(p => !isAlreadyLeadForEvent(p.person_id)).length})</button>
-      {selectedPersonIds.size > 0 && <button className="crm-toggle-chip" onClick={clearSelection}>Clear selection</button>}
-      <button className="crm-btn-secondary" onClick={cancelConvert}>Cancel</button>
-    </>
-  ) : (
-    <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 18px' }} onClick={startConvert}>
-      <UserPlus size={15} /> Convert to lead
-    </button>
-  )}
-  <span className="crm-count-note">{filtered.length} of {people.length}</span>
+      <div className="crm-toolbar">
+        {selecting ? (
+          <>
+            <select className="crm-filter-select" value={linkEventId} onChange={handleLinkEventChange} disabled={eventsLoading}>
+              <option value="">No event (general lead)</option>
+              {events.map(e => <option key={e.event_id} value={e.event_id}>{e.event_name} ({formatDate(e.start_date)})</option>)}
+            </select>
+            <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({filtered.filter(p => !isAlreadyLeadForEvent(p.person_id)).length})</button>
+            {selectedPersonIds.size > 0 && <button className="crm-toggle-chip" onClick={clearSelection}>Clear selection</button>}
+            <button className="crm-btn-secondary" onClick={cancelConvert}>Cancel</button>
+          </>
+        ) : (
+          <>
+            <select className="crm-filter-select" value={leadPurposeFilter} onChange={(e) => setLeadPurposeFilter(e.target.value)}>
+              <option value="">All purposes</option>
+              {LEAD_PURPOSE_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 18px' }} onClick={startConvert}>
+              <UserPlus size={15} /> Convert to lead
+            </button>
+          </>
+        )}
+        <span className="crm-count-note">{filtered.length} of {people.length}</span>
       </div>
 
       {loading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading people…</div>}
@@ -1091,39 +1111,44 @@ const filtered = useMemo(() => {
       {!loading && !error && (
         <div className="crm-table-wrap">
           <table className="crm-table">
-           <thead>
-  <tr>
-    {selecting && <th style={{ width: 36 }}></th>}
-    <th>Name</th>
-    <th>Email</th>
-    <th>Job title</th>
-    <th>Industry</th>
-    <th>Company</th>
-    <th>Country</th>
-    <th>LinkedIn</th>
-    <th>Status</th>
-    <th>Past Events</th>
-    {!selecting && <th></th>}
-  </tr>
-  <tr>
-    {selecting && <th></th>}
-    <th><input className="crm-cell-input" value={columnFilters.name} onChange={setColFilter('name')} placeholder="Filter…" /></th>
-    <th><input className="crm-cell-input" value={columnFilters.email} onChange={setColFilter('email')} placeholder="Filter…" /></th>
-    <th><input className="crm-cell-input" value={columnFilters.job_title} onChange={setColFilter('job_title')} placeholder="Filter…" /></th>
-    <th>
-      <select className="crm-cell-select" value={columnFilters.industry} onChange={setColFilter('industry')}>
-        <option value="">All</option>
-        {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
-      </select>
-    </th>
-    <th><input className="crm-cell-input" value={columnFilters.company} onChange={setColFilter('company')} placeholder="Filter…" /></th>
-    <th><input className="crm-cell-input" value={columnFilters.country} onChange={setColFilter('country')} placeholder="Filter…" /></th>
-    <th></th>
-    <th><input className="crm-cell-input" value={columnFilters.status} onChange={setColFilter('status')} placeholder="Filter…" /></th>
-    <th></th>
-    {!selecting && <th></th>}
-  </tr>
-</thead>
+            <thead>
+              <tr>
+                {selecting && <th style={{ width: 36 }}></th>}
+                <th>Name</th>
+                <th>Email</th>
+                <th>Job title</th>
+                <th>Industry</th>
+                <th>Company</th>
+                <th>Country</th>
+                <th>LinkedIn</th>
+                <th>Status</th>
+                <th>Past Events</th>
+                {!selecting && <th></th>}
+              </tr>
+              <tr>
+                {selecting && <th></th>}
+                <th><input className="crm-cell-input" value={columnFilters.name} onChange={setColFilter('name')} placeholder="Filter…" /></th>
+                <th><input className="crm-cell-input" value={columnFilters.email} onChange={setColFilter('email')} placeholder="Filter…" /></th>
+                <th><input className="crm-cell-input" value={columnFilters.job_title} onChange={setColFilter('job_title')} placeholder="Filter…" /></th>
+                <th>
+                  <select className="crm-cell-select" value={columnFilters.industry} onChange={setColFilter('industry')}>
+                    <option value="">All</option>
+                    {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
+                  </select>
+                </th>
+                <th><input className="crm-cell-input" value={columnFilters.company} onChange={setColFilter('company')} placeholder="Filter…" /></th>
+                <th><input className="crm-cell-input" value={columnFilters.country} onChange={setColFilter('country')} placeholder="Filter…" /></th>
+                <th></th>
+                <th>
+                  <select className="crm-cell-select" value={columnFilters.status} onChange={setColFilter('status')}>
+                    <option value="">All</option>
+                    {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </th>
+                <th></th>
+                {!selecting && <th></th>}
+              </tr>
+            </thead>
             <tbody>
               {paginate(filtered, peoplePage).map(p => {
                 const av = avatarStyle(p.first_name + p.last_name)
@@ -1135,23 +1160,23 @@ const filtered = useMemo(() => {
                 // Shared "Past Events" cell — same rendering whether the row
                 // is in edit mode or not. Shows event_id + role explicitly,
                 // one small tag per event, instead of a hidden-in-tooltip count.
-               const pastEventsCell = (
-               <td>
-                 {pastEventsLoading ? (
-                 <span className="crm-muted">…</span>
-                  ) : history.length === 0 ? (
-                 <span className="crm-muted">—</span>
-                ) : (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {history.map((h, i) => (
-         <span key={i} title={`${h.event_name} (${formatDate(h.start_date)}) — ${h.status || '—'}`}>
-         {h.event_id}{i < history.length - 1 ? ',' : ''}
-    </span>
-        ))}
-      </div>
-    )}
-  </td>
-)
+                const pastEventsCell = (
+                  <td>
+                    {pastEventsLoading ? (
+                      <span className="crm-muted">…</span>
+                    ) : history.length === 0 ? (
+                      <span className="crm-muted">—</span>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {history.map((h, i) => (
+                          <span key={i} title={`${h.event_name} (${formatDate(h.start_date)}) — ${h.status || '—'}`}>
+                            {h.event_id}{i < history.length - 1 ? ',' : ''}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </td>
+                )
                 if (isEditing) {
                   return (
                     <tr key={p.person_id} className="editing">
@@ -1170,7 +1195,12 @@ const filtered = useMemo(() => {
                       <td>{p.companies?.company_name || '—'}</td>
                       <td><input className="crm-cell-input" value={editForm.country} onChange={e => setEditForm({ ...editForm, country: e.target.value })} /></td>
                       <td>{p.linkedin_url ? <a href={externalUrl(p.linkedin_url)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
-                      <td><input className="crm-cell-input" value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })} /></td>
+                      <td>
+                        <select className="crm-cell-select" value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })}>
+                          <option value="">—</option>
+                          {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </td>
                       {pastEventsCell}
                       <td>
                         <div className="crm-row-actions">
