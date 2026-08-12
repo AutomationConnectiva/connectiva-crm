@@ -818,17 +818,26 @@ const LEAD_PURPOSE_OPTIONS = useMemo(() => {
   // convert mode, so leaving it restores exactly how it was.
   const wasSidebarCollapsedRef = useRef(sidebarCollapsed)
 
-  const fetchPeople = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+ const fetchPeople = useCallback(async () => {
+  setLoading(true)
+  setError(null)
+  const PAGE = 1000
+  let allRows = []
+  let from = 0
+  while (true) {
     const { data, error } = await supabase
       .from('people')
       .select('*, companies(company_name)')
       .order('created_at', { ascending: false })
-    if (error) setError(error.message)
-    else setPeople(data || [])
-    setLoading(false)
-  }, [])
+      .range(from, from + PAGE - 1)
+    if (error) { setError(error.message); setLoading(false); return }
+    allRows = allRows.concat(data || [])
+    if (!data || data.length < PAGE) break
+    from += PAGE
+  }
+  setPeople(allRows)
+  setLoading(false)
+}, [])
 
   const fetchLeadEventMap = useCallback(async () => {
     const { data, error } = await supabase.from('leads').select('person_id, event_id')
