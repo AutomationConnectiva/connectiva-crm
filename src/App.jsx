@@ -1380,119 +1380,459 @@ function LeadsPage({ showToast, onOpenLead }) {
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
-  const [activeOnly, setActiveOnly] = useState(true) // default on, per your call
+  const [activeOnly, setActiveOnly] = useState(true)
   const [leadsPage, setLeadsPage] = useState(1)
 
-  // email_campaign_stage stores raw codes like "2.2" — meaningful to the
-  // automation, meaningless to anyone reading this table. systems_tables
-  // ('Email Outreach' rows) holds the human description for each code
-  // (config2 -> description); we fetch it once and use it purely for
-  // display, never write it back anywhere.
+  // Active event used by "Convert to Attendee"
+  const [activeEvent, setActiveEvent] = useState(null)
+  const [activeEventLoading, setActiveEventLoading] = useState(true)
+  const [convertingLeadId, setConvertingLeadId] = useState(null)
+
+  // ---------------------------------------------------------------------------
+  // Email campaign stage labels
+  // ---------------------------------------------------------------------------
   const [stageLabels, setStageLabels] = useState({})
+
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase
         .from('systems_tables')
         .select('config2, description')
         .eq('system_name', 'Email Outreach')
+
       if (!error && data) {
         const map = {}
-        data.forEach(r => { map[(r.config2 || '').toString().trim()] = r.description })
+
+        data.forEach(r => {
+          map[(r.config2 || '').toString().trim()] = r.description
+        })
+
         setStageLabels(map)
       }
     })()
   }, [])
-  const emailStageLabel = (code) => stageLabels[(code || '').toString().trim()] || code
 
+  const emailStageLabel = (code) =>
+    stageLabels[(code || '').toString().trim()] || code
+
+  // ---------------------------------------------------------------------------
+  // Load active event
+  // ---------------------------------------------------------------------------
+  const fetchActiveEvent = useCallback(async () => {
+    setActiveEventLoading(true)
+
+    const { data, error } = await supabase
+      .from('events')
+      .select('event_id, event_name, start_date, end_date, status')
+      .eq('status', 'Active')
+      .order('start_date', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (error) {
+      showToast(`Couldn't load active event: ${error.message}`, true)
+      setActiveEvent(null)
+    } else {
+      setActiveEvent(data || null)
+    }
+
+    setActiveEventLoading(false)
+  }, [showToast])
+
+  useEffect(() => {
+    fetchActiveEvent()
+  }, [fetchActiveEvent])
+
+  // ---------------------------------------------------------------------------
+  // Load leads
+  // ---------------------------------------------------------------------------
   const fetchLeads = useCallback(async () => {
     setLoading(true)
     setError(null)
+
     const { data, error } = await supabase
       .from('leads')
       .select('*, people(first_name, last_name, owner_email)')
       .order('created_at', { ascending: false })
-    if (error) setError(error.message)
-    else setLeads(data || [])
+
+    if (error) {
+      setError(error.message)
+    } else {
+      setLeads(data || [])
+    }
+
     setLoading(false)
   }, [])
 
-  useEffect(() => { fetchLeads() }, [fetchLeads])
+  useEffect(() => {
+    fetchLeads()
+  }, [fetchLeads])
 
+  // ---------------------------------------------------------------------------
+  // Convert Lead -> Attendee
+  // ---------------------------------------------------------------------------
+  const convertLeadToAttendee = async (lead) => {
+    if (!activeEvent) {
+      showToast('No active event found', true)
+      return
+    }
+
+    setConvertingLeadId(lead.lead_id)
+
+    // Check whether this person is already an attendee
+    // for the active event.
+    const { data: existing, error: checkError } = await supabase
+      .from('event_participants')
+      .select('participant_id')
+      .eq('event_id', activeEvent.event_id)
+      .eq('person_id', lead.person_id)
+      .maybeSingle()
+
+    if (checkError) {
+      setConvertingLeadId(null)
+      showToast(`Couldn't check attendee: ${checkError.message}`, true)
+      return
+    }
+
+    if (existing) {
+      setConvertingLeadId(null)
+      showToast(
+        `This person is already an attendee for ${activeEvent.event_name}`,
+        true
+      )
+      return
+    }
+
+    // Add person to active event
+    const { error: insertError } = await supabase
+      .from('event_participants')
+      .insert({
+        event_id: activeEvent.event_id,
+        person_id: lead.person_id,
+        company_id: lead.company_id || null,
+        role: 'Attendee',
+        status: 'Invited'
+      })
+
+    setConvertingLeadId(null)
+
+    if (insertError) {
+      showToast(
+        `Couldn't add attendee: ${insertError.message}`,
+        true
+      )
+      return
+    }
+
+    showToast(
+      `${lead.people?.first_name || 'Person'} added to ${activeEvent.event_name}`
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // Filters
+  // ---------------------------------------------------------------------------
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
+
     return leads.filter(l => {
-      if (statusFilter && l.lead_status !== statusFilter) return false
-      // "Active" = not Unsubscribed. Flag if this definition should differ.
-      if (activeOnly && l.lead_status === 'Unsubscribed') return false
-      if (!q) return true
-      const personName = `${l.people?.first_name || ''} ${l.people?.last_name || ''}`
-      return `${personName} ${l.lead_purpose || ''} ${l.people?.owner_email || ''}`.toLowerCase().includes(q)
+      if (statusFilter && l.lead_status !== statusFilter) {
+        return false
+      }
+
+      // Active = not Unsubscribed
+      if (activeOnly && l.lead_status === 'Unsubscribed') {
+        return false
+      }
+
+      if (!q) {
+        return true
+      }
+
+      const personName =
+        `${l.people?.first_name || ''} ${l.people?.last_name || ''}`
+
+      return `${personName} ${l.lead_purpose || ''} ${l.people?.owner_email || ''}`
+        .toLowerCase()
+        .includes(q)
     })
   }, [leads, search, statusFilter, activeOnly])
 
-  useEffect(() => { setLeadsPage(1) }, [search, statusFilter, activeOnly])
+  useEffect(() => {
+    setLeadsPage(1)
+  }, [search, statusFilter, activeOnly])
 
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
   return (
     <div>
       <div className="crm-toolbar">
+
         <div className="crm-search-box">
-          <Search size={15} style={{ color: 'var(--ink-400)' }} />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search person, purpose, owner…" />
+          <Search
+            size={15}
+            style={{ color: 'var(--ink-400)' }}
+          />
+
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search person, purpose, owner…"
+          />
         </div>
-        <select className="crm-filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+
+        <select
+          className="crm-filter-select"
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+        >
           <option value="">All statuses</option>
-          {LEAD_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+
+          {LEAD_STATUS_OPTIONS.map(s => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
         </select>
-        <button className={`crm-toggle-chip${activeOnly ? ' on' : ''}`} onClick={() => setActiveOnly(v => !v)}>
-          {activeOnly ? <Check size={13} /> : null} Active campaigns only
+
+        <button
+          className={`crm-toggle-chip${activeOnly ? ' on' : ''}`}
+          onClick={() => setActiveOnly(v => !v)}
+        >
+          {activeOnly ? <Check size={13} /> : null}
+          Active campaigns only
         </button>
-        <span className="crm-count-note">{filtered.length} of {leads.length}</span>
+
+        {/* Active event indicator */}
+        <span className="crm-count-note">
+          {activeEventLoading
+            ? 'Loading active event…'
+            : activeEvent
+              ? `Active event: ${activeEvent.event_name}`
+              : 'No active event'}
+        </span>
+
+        <span className="crm-count-note">
+          {filtered.length} of {leads.length}
+        </span>
       </div>
 
-      {loading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading leads…</div>}
-      {error && <div className="crm-error">Couldn't load leads: {error}</div>}
+      {loading && (
+        <div className="crm-loading">
+          <Loader2 size={16} className="crm-spin" />
+          Loading leads…
+        </div>
+      )}
+
+      {error && (
+        <div className="crm-error">
+          Couldn't load leads: {error}
+        </div>
+      )}
 
       {!loading && !error && (
         <div className="crm-table-wrap">
           <table className="crm-table">
+
             <thead>
               <tr>
-                {['Person', 'Purpose', 'Status', 'Nurture', 'Owner', 'Cold calling', 'Email', 'Social', ''].map(h => <th key={h}>{h}</th>)}
+                {[
+                  'Person',
+                  'Purpose',
+                  'Status',
+                  'Nurture',
+                  'Owner',
+                  'Cold calling',
+                  'Email',
+                  'Social',
+                  ''
+                ].map(h => (
+                  <th key={h}>{h}</th>
+                ))}
               </tr>
             </thead>
+
             <tbody>
               {paginate(filtered, leadsPage).map(l => {
-                const personName = `${l.people?.first_name || ''} ${l.people?.last_name || ''}`.trim() || '—'
+
+                const personName =
+                  `${l.people?.first_name || ''} ${l.people?.last_name || ''}`
+                    .trim() || '—'
+
+                const isConverting =
+                  convertingLeadId === l.lead_id
+
                 return (
-                  <tr key={l.lead_id} className="clickable" onClick={() => onOpenLead(l.lead_id)}>
-                    <td style={{ fontWeight: 500, color: 'var(--ink-950)' }}>{personName}</td>
-                    <td>{l.lead_purpose || '—'}</td>
-                    <td><Badge value={l.lead_status} /></td>
-                    <td><Badge value={l.nurture_stage} /></td>
-                    <td>{l.people?.owner_email || '—'}</td>
-                       <td>{l.cold_calling ? <Badge value={l.cold_calling_stage || 'Not Pitched'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
-                       <td>{l.email_campaign ? <Badge value={emailStageLabel(l.email_campaign_stage) || 'Queued'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
-                       <td>{l.social_media ? <Badge value={l.social_media_stage || 'Queued'} /> : <span style={{ color: 'var(--ink-400)' }}>Off</span>}</td>
-                    <td>
-                      <button className="crm-icon-action" onClick={(e) => { e.stopPropagation(); onOpenLead(l.lead_id) }} aria-label="View details">
-                        <Eye size={14} />
-                      </button>
+                  <tr
+                    key={l.lead_id}
+                    className="clickable"
+                    onClick={() => onOpenLead(l.lead_id)}
+                  >
+
+                    <td
+                      style={{
+                        fontWeight: 500,
+                        color: 'var(--ink-950)'
+                      }}
+                    >
+                      {personName}
                     </td>
+
+                    <td>
+                      {l.lead_purpose || '—'}
+                    </td>
+
+                    <td>
+                      <Badge value={l.lead_status} />
+                    </td>
+
+                    <td>
+                      <Badge value={l.nurture_stage} />
+                    </td>
+
+                    <td>
+                      {l.people?.owner_email || '—'}
+                    </td>
+
+                    <td>
+                      {l.cold_calling ? (
+                        <Badge
+                          value={
+                            l.cold_calling_stage ||
+                            'Not Pitched'
+                          }
+                        />
+                      ) : (
+                        <span
+                          style={{
+                            color: 'var(--ink-400)'
+                          }}
+                        >
+                          Off
+                        </span>
+                      )}
+                    </td>
+
+                    <td>
+                      {l.email_campaign ? (
+                        <Badge
+                          value={
+                            emailStageLabel(
+                              l.email_campaign_stage
+                            ) || 'Queued'
+                          }
+                        />
+                      ) : (
+                        <span
+                          style={{
+                            color: 'var(--ink-400)'
+                          }}
+                        >
+                          Off
+                        </span>
+                      )}
+                    </td>
+
+                    <td>
+                      {l.social_media ? (
+                        <Badge
+                          value={
+                            l.social_media_stage ||
+                            'Queued'
+                          }
+                        />
+                      ) : (
+                        <span
+                          style={{
+                            color: 'var(--ink-400)'
+                          }}
+                        >
+                          Off
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Actions */}
+                    <td>
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 6,
+                          alignItems: 'center'
+                        }}
+                      >
+
+                        {/* View lead */}
+                        <button
+                          className="crm-icon-action"
+                          onClick={e => {
+                            e.stopPropagation()
+                            onOpenLead(l.lead_id)
+                          }}
+                          aria-label="View details"
+                          title="View lead details"
+                        >
+                          <Eye size={14} />
+                        </button>
+
+                        {/* Convert to attendee */}
+                        <button
+                          className="crm-icon-action"
+                          onClick={e => {
+                            e.stopPropagation()
+                            convertLeadToAttendee(l)
+                          }}
+                          disabled={
+                            isConverting ||
+                            activeEventLoading ||
+                            !activeEvent
+                          }
+                          aria-label="Convert to attendee"
+                          title={
+                            activeEvent
+                              ? `Add to ${activeEvent.event_name}`
+                              : 'No active event'
+                          }
+                        >
+                          {isConverting ? (
+                            <Loader2
+                              size={14}
+                              className="crm-spin"
+                            />
+                          ) : (
+                            <UserPlus size={14} />
+                          )}
+                        </button>
+
+                      </div>
+                    </td>
+
                   </tr>
                 )
               })}
+
               {filtered.length === 0 && (
-                <tr className="crm-empty-row"><td colSpan={9}>No leads match these filters.</td></tr>
+                <tr className="crm-empty-row">
+                  <td colSpan={9}>
+                    No leads match these filters.
+                  </td>
+                </tr>
               )}
+
             </tbody>
           </table>
-          <Pagination page={leadsPage} setPage={setLeadsPage} total={filtered.length} />
+
+          <Pagination
+            page={leadsPage}
+            setPage={setLeadsPage}
+            total={filtered.length}
+          />
         </div>
       )}
     </div>
   )
 }
-
 // ============================================================================
 // PERSON DETAIL — full page. Shows and edits every field for one person,
 // lists any leads already created from them, and offers a one-click
