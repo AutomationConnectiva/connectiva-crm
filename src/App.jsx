@@ -2306,8 +2306,24 @@ function AttendeesPage({ showToast }) {
       const existingIds = new Set(participants.map(p => p.person_id))
       const { data, error } = await supabase
         .from('leads')
-        .select('lead_id, person_id, nurture_stage, people(first_name, last_name, email, job_title, country, company_id, industry)')
-        .limit(500)
+        .select(`
+           lead_id,
+           person_id,
+           nurture_stage,
+           event_id,
+           people(
+            person_id,
+            first_name,
+            last_name,
+            email,
+           job_title,
+           country,
+          company_id,
+           industry
+    )
+  `)
+  .order('created_at', { ascending: false })
+  .limit(5000)
       if (error) { showToast(`Couldn't load leads: ${error.message}`, true); setCandidatesLoading(false); return }
 
       // Dedupe by person_id (a person can have more than one lead row across
