@@ -759,6 +759,8 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [industryFilter, setIndustryFilter] = useState('')
+  const [jobTitleFilter, setJobTitleFilter] = useState('')
+  const [leadPurposeFilter, setLeadPurposeFilter] = useState('')
   const [peoplePage, setPeoplePage] = useState(1)
 
   // Existing leads, keyed by person_id -> Set of event_ids they're already
@@ -773,6 +775,12 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   const [events, setEvents] = useState([])
   const [eventsLoading, setEventsLoading] = useState(true)
   const [linkEventId, setLinkEventId] = useState('')
+
+  // person_id -> [{event_name, start_date, role, status}] across ALL events
+  // (event_participants already stores this — we're just querying across
+  // every event instead of one). Powers the "Past Events" column below.
+  const [pastEventsByPerson, setPastEventsByPerson] = useState({})
+  const [pastEventsLoading, setPastEventsLoading] = useState(true)
 
   // Single-row inline edit (pencil icon).
   const [editingId, setEditingId] = useState(null)
@@ -825,21 +833,61 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     setEventsLoading(false)
   }, [])
 
-  useEffect(() => { fetchPeople(); fetchLeadEventMap(); fetchEvents() }, [fetchPeople, fetchLeadEventMap, fetchEvents])
+  // Pulls every event_participants row across all events, grouped by
+  // person_id, so each row can show a "past events" summary chip.
+  const fetchPastEvents = useCallback(async () => {
+    setPastEventsLoading(true)
+    const { data, error } = await supabase
+      .from('event_participants')
+      .select('person_id, role, status, events(event_name, start_date)')
+      .order('start_date', { ascending: false, foreignTable: 'events' })
+    if (!error) {
+      const map = {}
+      ;(data || []).forEach(row => {
+        if (!row.events) return
+        if (!map[row.person_id]) map[row.person_id] = []
+        map[row.person_id].push({
+          event_name: row.events.event_name,
+          start_date: row.events.start_date,
+          role: row.role,
+          status: row.status,
+        })
+      })
+      setPastEventsByPerson(map)
+    }
+    setPastEventsLoading(false)
+  }, [])
+
+  useEffect(() => {
+    fetchPeople(); fetchLeadEventMap(); fetchEvents(); fetchPastEvents()
+  }, [fetchPeople, fetchLeadEventMap, fetchEvents, fetchPastEvents])
+
+  // Dynamic filter option lists — job title and lead purpose are free text,
+  // so pull whatever distinct values already exist rather than hardcoding.
+  const jobTitleOptions = useMemo(
+    () => [...new Set(people.map(p => p.job_title).filter(Boolean))].sort(),
+    [people]
+  )
+  const leadPurposeOptions = useMemo(
+    () => [...new Set(people.map(p => p.lead_purpose).filter(Boolean))].sort(),
+    [people]
+  )
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
     return people.filter(p => {
       if (industryFilter && p.industry !== industryFilter) return false
+      if (jobTitleFilter && p.job_title !== jobTitleFilter) return false
+      if (leadPurposeFilter && p.lead_purpose !== leadPurposeFilter) return false
       if (!q) return true
       const companyName = p.companies?.company_name || ''
       return `${p.first_name} ${p.last_name} ${p.email} ${p.job_title || ''} ${p.industry || ''} ${companyName} ${p.country || ''}`
         .toLowerCase()
         .includes(q)
     })
-  }, [people, search, industryFilter])
+  }, [people, search, industryFilter, jobTitleFilter, leadPurposeFilter])
 
-  useEffect(() => { setPeoplePage(1) }, [search, industryFilter])
+  useEffect(() => { setPeoplePage(1) }, [search, industryFilter, jobTitleFilter, leadPurposeFilter])
 
   // A person is off-limits for the currently selected event if they're
   // already a lead tied to that same event (or already a bare/no-event lead,
@@ -1010,6 +1058,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   }
 
   const selecting = mode === 'select'
+  const COLUMN_COUNT = 10 // Name, Email, Job title, Industry, Company, Country, LinkedIn, Status, Past Events, actions
 
   const table = (
     <div>
@@ -1022,6 +1071,16 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
         <select className="crm-filter-select" value={industryFilter} onChange={e => setIndustryFilter(e.target.value)}>
           <option value="">All industries</option>
           {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
+        </select>
+
+        <select className="crm-filter-select" value={jobTitleFilter} onChange={e => setJobTitleFilter(e.target.value)}>
+          <option value="">All job titles</option>
+          {jobTitleOptions.map(j => <option key={j} value={j}>{j}</option>)}
+        </select>
+
+        <select className="crm-filter-select" value={leadPurposeFilter} onChange={e => setLeadPurposeFilter(e.target.value)}>
+          <option value="">All lead purposes</option>
+          {leadPurposeOptions.map(lp => <option key={lp} value={lp}>{lp}</option>)}
         </select>
 
         {selecting ? (
@@ -1060,6 +1119,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 <th>Country</th>
                 <th>LinkedIn</th>
                 <th>Status</th>
+                <th>Past Events</th>
                 {!selecting && <th></th>}
               </tr>
             </thead>
@@ -1069,6 +1129,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 const alreadyLead = leadPersonIds.has(p.person_id)
                 const isEditing = !selecting && editingId === p.person_id
                 const disabledForEvent = selecting && isAlreadyLeadForEvent(p.person_id)
+                const history = pastEventsByPerson[p.person_id] || []
 
                 if (isEditing) {
                   return (
@@ -1089,6 +1150,20 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                       <td><input className="crm-cell-input" value={editForm.country} onChange={e => setEditForm({ ...editForm, country: e.target.value })} /></td>
                       <td>{p.linkedin_url ? <a href={externalUrl(p.linkedin_url)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
                       <td><input className="crm-cell-input" value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })} /></td>
+                      <td>
+                        {pastEventsLoading ? (
+                          <span className="crm-muted">…</span>
+                        ) : history.length === 0 ? (
+                          <span className="crm-muted">—</span>
+                        ) : (
+                          <span
+                            className="crm-history-tag"
+                            title={history.map(h => `${h.event_name} (${formatDate(h.start_date)}) — ${h.role || '—'} / ${h.status || '—'}`).join('\n')}
+                          >
+                            {history.length} event{history.length > 1 ? 's' : ''}
+                          </span>
+                        )}
+                      </td>
                       <td>
                         <div className="crm-row-actions">
                           <button className="crm-icon-action save" onClick={() => saveEdit(p.person_id)} disabled={saving} aria-label="Save">
@@ -1136,6 +1211,20 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                     <td>{p.country || '—'}</td>
                     <td>{p.linkedin_url ? <a href={externalUrl(p.linkedin_url)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
                     <td><Badge value={p.status} /></td>
+                    <td>
+                      {pastEventsLoading ? (
+                        <span className="crm-muted">…</span>
+                      ) : history.length === 0 ? (
+                        <span className="crm-muted">—</span>
+                      ) : (
+                        <span
+                          className="crm-history-tag"
+                          title={history.map(h => `${h.event_name} (${formatDate(h.start_date)}) — ${h.role || '—'} / ${h.status || '—'}`).join('\n')}
+                        >
+                          {history.length} event{history.length > 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </td>
                     {!selecting && (
                       <td>
                         <button className="crm-icon-action" onClick={(e) => { e.stopPropagation(); startEdit(p) }} aria-label="Edit person" title="Edit">
@@ -1147,7 +1236,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 )
               })}
               {filtered.length === 0 && (
-                <tr className="crm-empty-row"><td colSpan={9}>No one matches that search.</td></tr>
+                <tr className="crm-empty-row"><td colSpan={COLUMN_COUNT}>No one matches that search.</td></tr>
               )}
             </tbody>
           </table>
@@ -1244,7 +1333,6 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     </div>
   )
 }
-
 // ============================================================================
 // LEADS — live data. Company lives on the person's record now, so it stays
 // dropped from this table. Each outreach channel gets its own status column
