@@ -2526,16 +2526,43 @@ function PersonForm({ showToast }) {
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
   const submit = async (e) => {
-    e.preventDefault()
-    if (!form.first_name || !form.email) return
-    setSubmitting(true)
-    const { error } = await supabase.from('people').insert({ ...form, company_id: company?.company_id || null })
-    setSubmitting(false)
-    if (error) { showToast(`Couldn't add person: ${error.message}`, true); return }
-    setForm({ first_name: '', last_name: '', email: '', job_title: '', industry: '', country: '', phone: '', mobile: '', linkedin_url: '' })
-    setCompany(null)
-    showToast('Person added')
+  e.preventDefault()
+  if (!form.first_name || !form.email) return
+  setSubmitting(true)
+
+  let companyId = company?.company_id || null
+
+  if (!companyId && company?.company_name?.trim()) {
+    const name = company.company_name.trim()
+    const { data: existing, error: lookupError } = await supabase
+      .from('companies')
+      .select('company_id')
+      .ilike('company_name', name)
+      .limit(1)
+      .maybeSingle()
+
+    if (lookupError) { setSubmitting(false); showToast(`Couldn't check company: ${lookupError.message}`, true); return }
+
+    if (existing) {
+      companyId = existing.company_id
+    } else {
+      const { data: created, error: createError } = await supabase
+        .from('companies')
+        .insert({ company_name: name })
+        .select('company_id')
+        .single()
+      if (createError) { setSubmitting(false); showToast(`Couldn't create company: ${createError.message}`, true); return }
+      companyId = created.company_id
+    }
   }
+
+  const { error } = await supabase.from('people').insert({ ...form, company_id: companyId })
+  setSubmitting(false)
+  if (error) { showToast(`Couldn't add person: ${error.message}`, true); return }
+  setForm({ first_name: '', last_name: '', email: '', job_title: '', industry: '', country: '', phone: '', mobile: '', linkedin_url: '' })
+  setCompany(null)
+  showToast('Person added')
+}
 
   return (
     <form onSubmit={submit} className="crm-form">
