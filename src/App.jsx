@@ -768,7 +768,10 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   return Array.from(set).sort()
   }, [people])
   
-  const LEAD_PURPOSE_OPTIONS = ['Delegate acquisition', 'Sponsor acquisition', 'Speaker acquisition']
+const LEAD_PURPOSE_OPTIONS = useMemo(() => {
+  const set = new Set(people.map(p => p.lead_purpose).filter(Boolean))
+  return Array.from(set).sort()
+}, [people])
 
   const [columnFilters, setColumnFilters] = useState({
     name: '', email: '', job_title: '', industry: '', company: '', country: '', status: '',
