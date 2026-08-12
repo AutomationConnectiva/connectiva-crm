@@ -1566,18 +1566,68 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
-  const save = async () => {
-    setSaving(true)
-    const { error } = await supabase
-      .from('people')
-      .update({ ...form, company_id: company?.company_id || null, updated_at: new Date().toISOString() })
-      .eq('person_id', personId)
-    setSaving(false)
-    if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
-    showToast('Person updated')
-    load()
+ const save = async () => {
+  setSaving(true)
+
+  let companyId = company?.company_id || null
+
+  // If user typed a company name but there is no company_id,
+  // find the existing company or create a new one.
+  if (!companyId && company?.company_name?.trim()) {
+    const name = company.company_name.trim()
+
+    const { data: existing, error: lookupError } = await supabase
+      .from('companies')
+      .select('company_id')
+      .ilike('company_name', name)
+      .limit(1)
+      .maybeSingle()
+
+    if (lookupError) {
+      setSaving(false)
+      showToast(`Couldn't check company: ${lookupError.message}`, true)
+      return
+    }
+
+    if (existing) {
+      companyId = existing.company_id
+    } else {
+      const { data: created, error: createError } = await supabase
+        .from('companies')
+        .insert({ company_name: name })
+        .select('company_id')
+        .single()
+
+      if (createError) {
+        setSaving(false)
+        showToast(`Couldn't create company: ${createError.message}`, true)
+        return
+      }
+
+      companyId = created.company_id
+    }
   }
 
+  // Now save the person with the correct company_id
+  const { error } = await supabase
+    .from('people')
+    .update({
+      ...form,
+      company_id: companyId,
+      updated_at: new Date().toISOString()
+    })
+    .eq('person_id', personId)
+
+  setSaving(false)
+
+  if (error) {
+    showToast(`Couldn't save: ${error.message}`, true)
+    return
+  }
+
+  showToast('Person updated')
+  load()
+}
   const createLead = async (convertForm) => {
     setCreatingLead(true)
     const { data, error } = await supabase
