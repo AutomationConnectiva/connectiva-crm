@@ -1148,7 +1148,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         {history.map((h, i) => (
          <span key={i} title={`${h.event_name} (${formatDate(h.start_date)}) — ${h.status || '—'}`}>
-         {h.event_id} · {h.role || '—'}{i < history.length - 1 ? ',' : ''}
+         {h.event_id}{i < history.length - 1 ? ',' : ''}
     </span>
         ))}
       </div>
