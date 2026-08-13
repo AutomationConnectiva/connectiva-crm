@@ -1027,7 +1027,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     const rows = selectedPeople.map(p => ({
       person_id: p.person_id,
       company_id: p.company_id || null,
-      event_id: eventIdToLink,
+      event_id: 'BANCEE26',
       lead_status: 'New',
       nurture_stage: 'Outreach',
       ...buildChannelRowFields(effectiveChannelValue, p.person_id),
