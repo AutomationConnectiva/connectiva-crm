@@ -689,8 +689,10 @@ export default function App() {
           {detail && detail.type === 'lead' && (
             <LeadDetailPage leadId={detail.id} showToast={showToast} onOpenPerson={openPerson} />
           )}
-          {!detail && activePage === 'people' && (
-            <PeoplePage showToast={showToast} onOpenPerson={openPerson} sidebarCollapsed={collapsed} setSidebarCollapsed={setCollapsed} />
+          {activePage === 'people' && (
+         <div style={{ display: detail ? 'none' : 'block' }}>
+           <PeoplePage showToast={showToast} onOpenPerson={openPerson} sidebarCollapsed={collapsed} setSidebarCollapsed={setCollapsed} />
+          </div>
           )}
           {!detail && activePage === 'leads' && <LeadsPage showToast={showToast} onOpenLead={openLead} />}
           {!detail && activePage === 'events' && <EventsPage showToast={showToast} />}
@@ -768,6 +770,10 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     const set = new Set(people.map(p => p.lead_purpose).filter(Boolean))
     return Array.from(set).sort()
   }, [people])
+  const COMBINED_PURPOSE_OPTIONS = useMemo(() => {
+  const set = new Set([...LEAD_PURPOSE_CHOICES, ...LEAD_PURPOSE_OPTIONS])
+  return Array.from(set).sort()
+}, [LEAD_PURPOSE_OPTIONS])
 
   const [columnFilters, setColumnFilters] = useState({
     name: '', email: '', job_title: '', industry: '', company: '', country: '', status: '',
@@ -793,6 +799,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
 
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
+  const [editCompany, setEditCompany] = useState(null)
   const [saving, setSaving] = useState(false)
 
   const [mode, setMode] = useState('browse')
@@ -925,18 +932,64 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
       job_title: p.job_title || '', country: p.country || '', status: p.status || '',
       industry: p.industry || '',
     })
+    setEditCompany(p.companies ? { company_id: p.company_id, company_name: p.companies.company_name } : null)
   }
-  const cancelEdit = () => { setEditingId(null); setEditForm(null) }
+  const cancelEdit = () => { setEditingId(null); setEditForm(null);setEditCompany(null) }
   const saveEdit = async (personId) => {
-    setSaving(true)
-    const { error } = await supabase.from('people').update({ ...editForm, updated_at: new Date().toISOString() }).eq('person_id', personId)
-    setSaving(false)
-    if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
-    setPeople(prev => prev.map(p => (p.person_id === personId ? { ...p, ...editForm } : p)))
-    setEditingId(null)
-    setEditForm(null)
-    showToast('Person updated')
+  setSaving(true)
+
+  let companyId = editCompany?.company_id || null
+
+  if (!companyId && editCompany?.company_name?.trim()) {
+    const name = editCompany.company_name.trim()
+    const { data: existing, error: lookupError } = await supabase
+      .from('companies')
+      .select('company_id')
+      .ilike('company_name', name)
+      .limit(1)
+      .maybeSingle()
+
+    if (lookupError) {
+      setSaving(false)
+      showToast(`Couldn't check company: ${lookupError.message}`, true)
+      return
+    }
+
+    if (existing) {
+      companyId = existing.company_id
+    } else {
+      const { data: created, error: createError } = await supabase
+        .from('companies')
+        .insert({ company_name: name })
+        .select('company_id')
+        .single()
+      if (createError) {
+        setSaving(false)
+        showToast(`Couldn't create company: ${createError.message}`, true)
+        return
+      }
+      companyId = created.company_id
+    }
   }
+
+  const { error } = await supabase
+    .from('people')
+    .update({ ...editForm, company_id: companyId, updated_at: new Date().toISOString() })
+    .eq('person_id', personId)
+
+  setSaving(false)
+  if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
+
+  setPeople(prev => prev.map(p =>
+    p.person_id === personId
+      ? { ...p, ...editForm, company_id: companyId, companies: editCompany ? { company_name: editCompany.company_name } : null }
+      : p
+  ))
+  setEditingId(null)
+  setEditForm(null)
+  setEditCompany(null)
+  showToast('Person updated')
+}
 
   const startConvert = () => {
     if (!leadPurposeFilter) {
@@ -1099,8 +1152,8 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
         ) : (
           <>
             <select className="crm-filter-select" value={leadPurposeFilter} onChange={(e) => setLeadPurposeFilter(e.target.value)}>
-              <option value="">Select purpose…</option>
-               {LEAD_PURPOSE_CHOICES.map(p => <option key={p} value={p}>{p}</option>)}
+            <option value="">Select purpose…</option>
+            {COMBINED_PURPOSE_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
             <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 18px' }} onClick={startConvert}>
               <UserPlus size={15} /> Convert to lead
