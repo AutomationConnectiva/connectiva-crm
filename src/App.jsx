@@ -2300,7 +2300,9 @@ function EventsPage({ showToast }) {
     return events.filter(e => {
       if (statusFilter && e.status !== statusFilter) return false
       if (!q) return true
-      return `${e.event_name} ${e.event_type || ''} ${e.location || ''} ${e.country || ''}`.toLowerCase().includes(q)
+      // event_id included in search since it's the meaningful lookup key
+      // used everywhere else (leads.event_id, event_participants.event_id).
+      return `${e.event_id} ${e.event_name} ${e.event_type || ''} ${e.location || ''} ${e.country || ''}`.toLowerCase().includes(q)
     })
   }, [events, search, statusFilter])
 
@@ -2336,7 +2338,7 @@ function EventsPage({ showToast }) {
       <div className="crm-toolbar">
         <div className="crm-search-box">
           <Search size={15} style={{ color: 'var(--ink-400)' }} />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search event, type, location, country…" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search event ID, name, type, location, country…" />
         </div>
         <select className="crm-filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="">All statuses</option>
@@ -2352,13 +2354,17 @@ function EventsPage({ showToast }) {
         <div className="crm-table-wrap">
           <table className="crm-table">
             <thead>
-              <tr>{['Event', 'Type', 'Dates', 'Location', 'Country', 'Status', ''].map(h => <th key={h}>{h}</th>)}</tr>
+              <tr>{['Event ID', 'Event', 'Type', 'Dates', 'Location', 'Country', 'Status', ''].map(h => <th key={h}>{h}</th>)}</tr>
             </thead>
             <tbody>
               {paginate(filtered, eventsPage).map(e => {
                 const isEditing = editingId === e.event_id
                 return (
                   <tr key={e.event_id} className={isEditing ? 'editing' : ''}>
+                    {/* event_id is always read-only, even while editing — it's
+                        the FK every lead and event_participants row keys off,
+                        so changing it here would silently orphan those rows. */}
+                    <td style={{ fontFamily: 'monospace', fontSize: 12.5, color: 'var(--ink-700)' }}>{e.event_id}</td>
                     {isEditing ? (
                       <>
                         <td><input className="crm-cell-input" value={editForm.event_name} onChange={ev => setEditForm({ ...editForm, event_name: ev.target.value })} /></td>
@@ -2400,7 +2406,7 @@ function EventsPage({ showToast }) {
                   </tr>
                 )
               })}
-              {filtered.length === 0 && <tr className="crm-empty-row"><td colSpan={7}>No events match these filters.</td></tr>}
+              {filtered.length === 0 && <tr className="crm-empty-row"><td colSpan={8}>No events match these filters.</td></tr>}
             </tbody>
           </table>
           <Pagination page={eventsPage} setPage={setEventsPage} total={filtered.length} />
@@ -2409,7 +2415,6 @@ function EventsPage({ showToast }) {
     </div>
   )
 }
-
 // ============================================================================
 // ATTENDEES — pick an event, manage who's already attached to it (edit-lock,
 // removable, paginated), and add more people via search/industry filter with
