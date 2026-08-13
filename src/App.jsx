@@ -895,8 +895,8 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     const company = f.company.toLowerCase().trim()
     const country = f.country.toLowerCase().trim()
     return people.filter(p => {
-      // NEW: hide anyone already a lead tied to the Active event.
-      if (activeEventId && leadEventMap.get(p.person_id)?.has(activeEventId)) return false
+
+      if (leadPersonIds.has(p.person_id)) return false
 
       const companyName = p.companies?.company_name || ''
       if (name && !`${p.first_name} ${p.last_name}`.toLowerCase().includes(name)) return false
@@ -909,7 +909,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
       if (leadPurposeFilter && p.lead_purpose !== leadPurposeFilter) return false
       return true
     })
-  }, [people, columnFilters, leadPurposeFilter, activeEventId, leadEventMap])
+  }, [people, columnFilters, leadPurposeFilter, leadPersonIds])
 
   useEffect(() => { setPeoplePage(1) }, [columnFilters, leadPurposeFilter])
 
