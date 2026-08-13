@@ -1143,7 +1143,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     const rows = selectedPeople.map(p => ({
       person_id: p.person_id,
       company_id: p.company_id || null,
-      event_id: 'BANCEE26',
+      event_id: linkEventId || null,
       lead_status: 'New',
       nurture_stage: 'Outreach',
       lead_purpose: leadPurposeFilter,
@@ -1154,7 +1154,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     if (error) { showToast(`Couldn't create leads: ${error.message}`, true); return }
     setLeadEventMap(prev => {
       const next = new Map(prev)
-      const key = 'BANCEE26'
+      const key = linkEventId || 'NONE'
       rows.forEach(r => {
         const set = new Set(next.get(r.person_id) || [])
         set.add(key)
@@ -1173,7 +1173,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
             if (undoError) { showToast(`Couldn't undo: ${undoError.message}`, true); return }
             setLeadEventMap(prev => {
               const next = new Map(prev)
-              const key = 'BANCEE26'
+              const key = linkEventId || 'NONE'
               rows.forEach(r => {
                 const set = new Set(next.get(r.person_id) || [])
                 set.delete(key)
@@ -1919,14 +1919,14 @@ function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLe
     setCreatingLead(true)
     const { data, error } = await supabase
       .from('leads')
-      .insert({ person_id: personId, company_id: company?.company_id || null, event_id: 'BANCEE26', ...convertForm })
+      .insert({ person_id: personId, company_id: company?.company_id || null, event_id: null, ...convertForm })
       .select()
       .single()
     setCreatingLead(false)
     if (error) { showToast(`Couldn't create lead: ${error.message}`, true); return }
 
     // Keep the People page's hidden-leads map in sync with this flow too.
-    onLeadCreated && onLeadCreated(personId, 'BANCEE26')
+    onLeadCreated && onLeadCreated(personId, null)
 
     showToast(
       'Lead created',
@@ -1934,7 +1934,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLe
       async () => {
         const { error: undoError } = await supabase.from('leads').delete().eq('lead_id', data.lead_id)
         if (undoError) { showToast(`Couldn't undo: ${undoError.message}`, true); return }
-        onLeadRemoved && onLeadRemoved(personId, 'BANCEE26')
+        onLeadRemoved && onLeadRemoved(personId, null)
         showToast('Undone — lead removed')
         loadLeads()
       }
