@@ -1983,7 +1983,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
     setCreatingLead(true)
     const { data, error } = await supabase
       .from('leads')
-      .insert({ person_id: personId, company_id: company?.company_id || null, event_id: null, ...convertForm })
+      .insert({ person_id: personId, company_id: company?.company_id || null, event_id: 'BANCEE26', ...convertForm })
       .select()
       .single()
     setCreatingLead(false)
