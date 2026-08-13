@@ -1454,23 +1454,26 @@ function LeadsPage({ showToast, onOpenLead }) {
   // ---------------------------------------------------------------------------
   // Load leads
   // ---------------------------------------------------------------------------
-  const fetchLeads = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-
+const fetchLeads = useCallback(async () => {
+  setLoading(true)
+  setError(null)
+  const PAGE = 1000
+  let allRows = []
+  let from = 0
+  while (true) {
     const { data, error } = await supabase
       .from('leads')
       .select('*, people(first_name, last_name, owner_email)')
       .order('created_at', { ascending: false })
-
-    if (error) {
-      setError(error.message)
-    } else {
-      setLeads(data || [])
-    }
-
-    setLoading(false)
-  }, [])
+      .range(from, from + PAGE - 1)
+    if (error) { setError(error.message); setLoading(false); return }
+    allRows = allRows.concat(data || [])
+    if (!data || data.length < PAGE) break
+    from += PAGE
+  }
+  setLeads(allRows)
+  setLoading(false)
+}, [])
 
   useEffect(() => {
     fetchLeads()
