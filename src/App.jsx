@@ -643,18 +643,28 @@ export default function App() {
   const [toast, setToast] = useState(null) // { message, error, onUndo }
 
   const [leadEventMap, setLeadEventMap] = useState(new Map())
-  const fetchLeadEventMap = useCallback(async () => {
-    const { data, error } = await supabase.from('leads').select('person_id, event_id')
-    if (!error) {
-      const map = new Map()
-      ;(data || []).forEach(r => {
-        const key = r.event_id || 'NONE'
-        if (!map.has(r.person_id)) map.set(r.person_id, new Set())
-        map.get(r.person_id).add(key)
-      })
-      setLeadEventMap(map)
-    }
-  }, [])
+const fetchLeadEventMap = useCallback(async () => {
+  const PAGE = 1000
+  let allRows = []
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('leads')
+      .select('person_id, event_id')
+      .range(from, from + PAGE - 1)
+    if (error) return
+    allRows = allRows.concat(data || [])
+    if (!data || data.length < PAGE) break
+    from += PAGE
+  }
+  const map = new Map()
+  allRows.forEach(r => {
+    const key = r.event_id || 'NONE'
+    if (!map.has(r.person_id)) map.set(r.person_id, new Set())
+    map.get(r.person_id).add(key)
+  })
+  setLeadEventMap(map)
+}, [])
   useEffect(() => { fetchLeadEventMap() }, [fetchLeadEventMap])
 
   // Called by any conversion flow (bulk from People, or single from Person
