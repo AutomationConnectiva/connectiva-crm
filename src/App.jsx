@@ -1582,6 +1582,7 @@ function LeadsPage({ showToast, onOpenLead }) {
       .from('leads')
       .select('*, people(first_name, last_name, owner_email)')
       .order('created_at', { ascending: false })
+      .order('lead_id', { ascending: true })
       .range(from, from + PAGE - 1)
     query = selectedEventId === 'NONE' ? query.is('event_id', null) : query.eq('event_id', selectedEventId)
     const { data, error } = await query
