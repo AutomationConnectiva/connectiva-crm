@@ -117,11 +117,35 @@ function paginate(items, page) {
 }
 function Pagination({ page, setPage, total }) {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const [jumpValue, setJumpValue] = useState('')
+
+  const commitJump = () => {
+    const n = parseInt(jumpValue, 10)
+    if (!Number.isNaN(n)) {
+      setPage(Math.min(totalPages, Math.max(1, n)))
+    }
+    setJumpValue('')
+  }
+
   return (
     <div className="crm-pagination">
       <span>Page {page} of {totalPages} · {total} total</span>
       <button className="crm-page-btn" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}>Prev</button>
       <button className="crm-page-btn" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next</button>
+      <div className="crm-pagination-jump">
+        <input
+          type="number"
+          min={1}
+          max={totalPages}
+          className="crm-pagination-jump-input"
+          placeholder={`${page}`}
+          value={jumpValue}
+          onChange={e => setJumpValue(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commitJump() }}
+        />
+        <span className="crm-pagination-jump-of">of {totalPages}</span>
+        <button className="crm-page-btn" onClick={commitJump}>Go</button>
+      </div>
     </div>
   )
 }
@@ -239,7 +263,11 @@ const CSS = `
   .crm-pagination { display: flex; align-items: center; gap: 10px; justify-content: flex-end; padding: 12px 4px; font-size: 13px; color: var(--ink-700); }
   .crm-page-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 13px; }
   .crm-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
+  .crm-pagination-jump { display: flex; align-items: center; gap: 6px; margin-left: 6px; }
+  .crm-pagination-jump-input { width: 56px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); font-size: 13px; font-family: inherit; text-align: center; outline: none; }
+  .crm-pagination-jump-input:focus { border-color: var(--accent); }
+  .crm-pagination-jump-of { font-size: 12.5px; color: var(--ink-400); white-space: nowrap; }
+  
   .crm-table-wrap { border: 1px solid var(--line); background: var(--surface); border-radius: 16px; overflow: auto; }
   .crm-table { width: 100%; font-size: 13.5px; border-collapse: collapse; min-width: 760px; }
   .crm-table thead tr { border-bottom: 1px solid var(--line); }
