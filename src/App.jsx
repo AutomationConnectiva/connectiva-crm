@@ -2520,27 +2520,50 @@ function AttendeesPage({ showToast }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const fetchParticipants = useCallback(async (eventId) => {
-    if (!eventId) return []
-    setParticipantsLoading(true)
+ const fetchParticipants = useCallback(async (eventId) => {
+  if (!eventId) return []
+  setParticipantsLoading(true)
+  const PAGE = 1000
+  let allRows = []
+  let from = 0
+  while (true) {
     const { data, error } = await supabase
       .from('event_participants')
       .select('*, people(first_name, last_name, email), companies(company_name)')
       .eq('event_id', eventId)
       .order('created_at', { ascending: false })
+      .order('participant_id', { ascending: true })
+      .range(from, from + PAGE - 1)
     if (error) { showToast(`Couldn't load attendees: ${error.message}`, true); setParticipantsLoading(false); return [] }
-    setParticipants(data || [])
-    setParticipantsLoading(false)
-    return data || []
-  }, [showToast])
+    allRows = allRows.concat(data || [])
+    if (!data || data.length < PAGE) break
+    from += PAGE
+  }
+  setParticipants(allRows)
+  setParticipantsLoading(false)
+  return allRows
+}, [showToast])
 
   // Cross-references leads for this same event so the participants table can
   // flag "already a lead for this event" without a manual lookup elsewhere.
-  const fetchLeadsForEvent = useCallback(async (eventId) => {
-    if (!eventId) { setLeadPersonIdsForEvent(new Set()); return }
-    const { data, error } = await supabase.from('leads').select('person_id').eq('event_id', eventId)
-    if (!error) setLeadPersonIdsForEvent(new Set((data || []).map(r => r.person_id)))
-  }, [])
+const fetchLeadsForEvent = useCallback(async (eventId) => {
+  if (!eventId) { setLeadPersonIdsForEvent(new Set()); return }
+  const PAGE = 1000
+  let allRows = []
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('leads')
+      .select('person_id')
+      .eq('event_id', eventId)
+      .range(from, from + PAGE - 1)
+    if (error) return
+    allRows = allRows.concat(data || [])
+    if (!data || data.length < PAGE) break
+    from += PAGE
+  }
+  setLeadPersonIdsForEvent(new Set(allRows.map(r => r.person_id)))
+}, [])
 
   // Pulls attendance history for the people currently shown, by looking at
   // every OTHER event_participants row for those person_ids. Grouped client
