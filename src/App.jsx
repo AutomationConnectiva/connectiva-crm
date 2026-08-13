@@ -1306,7 +1306,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                           {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
                         </select>
                       </td>
-                      <td>{p.companies?.company_name || '—'}</td>
+                      <td><CompanyPicker value={editCompany} onChange={setEditCompany} /></td>
                       <td><input className="crm-cell-input" value={editForm.country} onChange={e => setEditForm({ ...editForm, country: e.target.value })} /></td>
                       <td>{p.linkedin_url ? <a href={externalUrl(p.linkedin_url)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
                       <td>
