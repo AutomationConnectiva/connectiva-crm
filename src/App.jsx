@@ -614,6 +614,49 @@ export default function App() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [toast, setToast] = useState(null) // { message, error, onUndo }
 
+  const [leadEventMap, setLeadEventMap] = useState(new Map())
+  const fetchLeadEventMap = useCallback(async () => {
+    const { data, error } = await supabase.from('leads').select('person_id, event_id')
+    if (!error) {
+      const map = new Map()
+      ;(data || []).forEach(r => {
+        const key = r.event_id || 'NONE'
+        if (!map.has(r.person_id)) map.set(r.person_id, new Set())
+        map.get(r.person_id).add(key)
+      })
+      setLeadEventMap(map)
+    }
+  }, [])
+  useEffect(() => { fetchLeadEventMap() }, [fetchLeadEventMap])
+
+  // Called by any conversion flow (bulk from People, or single from Person
+  // detail) right after a lead row is successfully inserted, so every flow
+  // updates the SAME map that PeoplePage reads from to hide converted people.
+  const addToLeadEventMap = useCallback((personId, eventId) => {
+    setLeadEventMap(prev => {
+      const next = new Map(prev)
+      const key = eventId || 'NONE'
+      const set = new Set(next.get(personId) || [])
+      set.add(key)
+      next.set(personId, set)
+      return next
+    })
+  }, [])
+
+  // Called by undo handlers after a lead row is deleted, so undo correctly
+  // brings the person back into the People page.
+  const removeFromLeadEventMap = useCallback((personId, eventId) => {
+    setLeadEventMap(prev => {
+      const next = new Map(prev)
+      const key = eventId || 'NONE'
+      const set = new Set(next.get(personId) || [])
+      set.delete(key)
+      if (set.size === 0) next.delete(personId)
+      else next.set(personId, set)
+      return next
+    })
+  }, [])
+
   // detail = null | { type: 'person' | 'lead', id }
   // When set, a full-page detail view replaces the current page's content.
   const [detail, setDetail] = useState(null)
@@ -684,14 +727,27 @@ export default function App() {
 
         <main className="crm-content">
           {detail && detail.type === 'person' && (
-            <PersonDetailPage personId={detail.id} showToast={showToast} onOpenLead={openLead} />
+            <PersonDetailPage
+              personId={detail.id}
+              showToast={showToast}
+              onOpenLead={openLead}
+              onLeadCreated={addToLeadEventMap}
+              onLeadRemoved={removeFromLeadEventMap}
+            />
           )}
           {detail && detail.type === 'lead' && (
             <LeadDetailPage leadId={detail.id} showToast={showToast} onOpenPerson={openPerson} />
           )}
           {activePage === 'people' && (
          <div style={{ display: detail ? 'none' : 'block' }}>
-           <PeoplePage showToast={showToast} onOpenPerson={openPerson} sidebarCollapsed={collapsed} setSidebarCollapsed={setCollapsed} />
+           <PeoplePage
+             showToast={showToast}
+             onOpenPerson={openPerson}
+             sidebarCollapsed={collapsed}
+             setSidebarCollapsed={setCollapsed}
+             leadEventMap={leadEventMap}
+             setLeadEventMap={setLeadEventMap}
+           />
           </div>
           )}
           {!detail && activePage === 'leads' && <LeadsPage showToast={showToast} onOpenLead={openLead} />}
@@ -755,7 +811,7 @@ function SidebarContent({ collapsed, setCollapsed, activePage, goTo, onCloseMobi
 // people scan this table for; industry (Insurance / Banking / Finance) is,
 // and it's filterable.
 // ============================================================================
-function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarCollapsed }) {
+function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarCollapsed, leadEventMap, setLeadEventMap }) {
   const [people, setPeople] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -771,9 +827,9 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     return Array.from(set).sort()
   }, [people])
   const COMBINED_PURPOSE_OPTIONS = useMemo(() => {
-  const set = new Set([...LEAD_PURPOSE_CHOICES, ...LEAD_PURPOSE_OPTIONS])
-  return Array.from(set).sort()
-}, [LEAD_PURPOSE_OPTIONS])
+    const set = new Set([...LEAD_PURPOSE_CHOICES, ...LEAD_PURPOSE_OPTIONS])
+    return Array.from(set).sort()
+  }, [LEAD_PURPOSE_OPTIONS])
 
   const [columnFilters, setColumnFilters] = useState({
     name: '', email: '', job_title: '', industry: '', company: '', country: '', status: '',
@@ -781,7 +837,9 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   const [leadPurposeFilter, setLeadPurposeFilter] = useState('')
   const setColFilter = (key) => (e) => setColumnFilters(prev => ({ ...prev, [key]: e.target.value }))
 
-  const [leadEventMap, setLeadEventMap] = useState(new Map())
+  // leadEventMap / setLeadEventMap now come in as props from App — this is
+  // the single shared source of truth so every conversion flow (bulk here,
+  // or the quick-convert on Person detail) keeps this page in sync.
   const leadPersonIds = useMemo(() => new Set(leadEventMap.keys()), [leadEventMap])
 
   const [events, setEvents] = useState([])
@@ -791,9 +849,6 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   const [pastEventsByPerson, setPastEventsByPerson] = useState({})
   const [pastEventsLoading, setPastEventsLoading] = useState(true)
 
-  // NEW: the currently Active event, used to hide anyone already converted
-  // to a lead for that event from the People page entirely (not just
-  // disabled during select mode — hidden everywhere on this page).
   const [activeEventId, setActiveEventId] = useState(null)
   const [activeEventLoading, setActiveEventLoading] = useState(true)
 
@@ -832,19 +887,6 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     setLoading(false)
   }, [])
 
-  const fetchLeadEventMap = useCallback(async () => {
-    const { data, error } = await supabase.from('leads').select('person_id, event_id')
-    if (!error) {
-      const map = new Map()
-      ;(data || []).forEach(r => {
-        const key = r.event_id || 'NONE'
-        if (!map.has(r.person_id)) map.set(r.person_id, new Set())
-        map.get(r.person_id).add(key)
-      })
-      setLeadEventMap(map)
-    }
-  }, [])
-
   const fetchEvents = useCallback(async () => {
     setEventsLoading(true)
     const { data, error } = await supabase.from('events').select('event_id, event_name, start_date').order('start_date', { ascending: false })
@@ -876,7 +918,6 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     setPastEventsLoading(false)
   }, [])
 
-  // NEW: fetch the Active event's id.
   const fetchActiveEventId = useCallback(async () => {
     setActiveEventLoading(true)
     const { data, error } = await supabase
@@ -891,8 +932,8 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   }, [])
 
   useEffect(() => {
-    fetchPeople(); fetchLeadEventMap(); fetchEvents(); fetchPastEvents(); fetchActiveEventId()
-  }, [fetchPeople, fetchLeadEventMap, fetchEvents, fetchPastEvents, fetchActiveEventId])
+    fetchPeople(); fetchEvents(); fetchPastEvents(); fetchActiveEventId()
+  }, [fetchPeople, fetchEvents, fetchPastEvents, fetchActiveEventId])
 
   const filtered = useMemo(() => {
     const f = columnFilters
@@ -902,9 +943,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     const company = f.company.toLowerCase().trim()
     const country = f.country.toLowerCase().trim()
     return people.filter(p => {
-
       if (leadPersonIds.has(p.person_id)) return false
-
       const companyName = p.companies?.company_name || ''
       if (name && !`${p.first_name} ${p.last_name}`.toLowerCase().includes(name)) return false
       if (email && !(p.email || '').toLowerCase().includes(email)) return false
@@ -934,68 +973,53 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     })
     setEditCompany(p.companies ? { company_id: p.company_id, company_name: p.companies.company_name } : null)
   }
-  const cancelEdit = () => { setEditingId(null); setEditForm(null);setEditCompany(null) }
+  const cancelEdit = () => { setEditingId(null); setEditForm(null); setEditCompany(null) }
   const saveEdit = async (personId) => {
-  setSaving(true)
-
-  let companyId = editCompany?.company_id || null
-
-  if (!companyId && editCompany?.company_name?.trim()) {
-    const name = editCompany.company_name.trim()
-    const { data: existing, error: lookupError } = await supabase
-      .from('companies')
-      .select('company_id')
-      .ilike('company_name', name)
-      .limit(1)
-      .maybeSingle()
-
-    if (lookupError) {
-      setSaving(false)
-      showToast(`Couldn't check company: ${lookupError.message}`, true)
-      return
-    }
-
-    if (existing) {
-      companyId = existing.company_id
-    } else {
-      const { data: created, error: createError } = await supabase
+    setSaving(true)
+    let companyId = editCompany?.company_id || null
+    if (!companyId && editCompany?.company_name?.trim()) {
+      const name = editCompany.company_name.trim()
+      const { data: existing, error: lookupError } = await supabase
         .from('companies')
-        .insert({ company_name: name })
         .select('company_id')
-        .single()
-      if (createError) {
-        setSaving(false)
-        showToast(`Couldn't create company: ${createError.message}`, true)
-        return
+        .ilike('company_name', name)
+        .limit(1)
+        .maybeSingle()
+      if (lookupError) { setSaving(false); showToast(`Couldn't check company: ${lookupError.message}`, true); return }
+      if (existing) {
+        companyId = existing.company_id
+      } else {
+        const { data: created, error: createError } = await supabase
+          .from('companies')
+          .insert({ company_name: name })
+          .select('company_id')
+          .single()
+        if (createError) { setSaving(false); showToast(`Couldn't create company: ${createError.message}`, true); return }
+        companyId = created.company_id
       }
-      companyId = created.company_id
     }
+    const { error } = await supabase
+      .from('people')
+      .update({ ...editForm, company_id: companyId, updated_at: new Date().toISOString() })
+      .eq('person_id', personId)
+    setSaving(false)
+    if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
+    setPeople(prev => prev.map(p =>
+      p.person_id === personId
+        ? { ...p, ...editForm, company_id: companyId, companies: editCompany ? { company_name: editCompany.company_name } : null }
+        : p
+    ))
+    setEditingId(null)
+    setEditForm(null)
+    setEditCompany(null)
+    showToast('Person updated')
   }
-
-  const { error } = await supabase
-    .from('people')
-    .update({ ...editForm, company_id: companyId, updated_at: new Date().toISOString() })
-    .eq('person_id', personId)
-
-  setSaving(false)
-  if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
-
-  setPeople(prev => prev.map(p =>
-    p.person_id === personId
-      ? { ...p, ...editForm, company_id: companyId, companies: editCompany ? { company_name: editCompany.company_name } : null }
-      : p
-  ))
-  setEditingId(null)
-  setEditForm(null)
-  setEditCompany(null)
-  showToast('Person updated')
-}
 
   const startConvert = () => {
     if (!leadPurposeFilter) {
-    showToast('Pick a purpose from the dropdown first', true)
-    return
-  }
+      showToast('Pick a purpose from the dropdown first', true)
+      return
+    }
     wasSidebarCollapsedRef.current = sidebarCollapsed
     setSidebarCollapsed(true)
     setMode('select')
@@ -1031,9 +1055,6 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   }
   const selectAllFiltered = () => setSelectedPersonIds(new Set(filtered.filter(p => !isAlreadyLeadForEvent(p.person_id)).map(p => p.person_id)))
 
-  // NEW: select-all limited to whichever page you're currently viewing —
-  // adds to (rather than replaces) whatever's already selected, so you can
-  // page through and build up a selection across several pages.
   const selectAllOnPage = () => {
     const pageIds = paginate(filtered, peoplePage)
       .filter(p => !isAlreadyLeadForEvent(p.person_id))
@@ -1152,8 +1173,8 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
         ) : (
           <>
             <select className="crm-filter-select" value={leadPurposeFilter} onChange={(e) => setLeadPurposeFilter(e.target.value)}>
-            <option value="">Select purpose…</option>
-            {COMBINED_PURPOSE_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+              <option value="">Select purpose…</option>
+              {COMBINED_PURPOSE_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
             <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 18px' }} onClick={startConvert}>
               <UserPlus size={15} /> Convert to lead
@@ -1440,6 +1461,23 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
 // page, where everything is edited.
 // ============================================================================
 function LeadsPage({ showToast, onOpenLead }) {
+  // NEW: which event's leads we're viewing. null = show the picker.
+  const [selectedEventId, setSelectedEventId] = useState(null) // event_id string | 'NONE' | null
+  const [pickerEvents, setPickerEvents] = useState([])
+  const [pickerEventsLoading, setPickerEventsLoading] = useState(true)
+
+  const fetchPickerEvents = useCallback(async () => {
+    setPickerEventsLoading(true)
+    const { data, error } = await supabase
+      .from('events')
+      .select('event_id, event_name, start_date, status')
+      .order('start_date', { ascending: false })
+    if (!error) setPickerEvents(data || [])
+    setPickerEventsLoading(false)
+  }, [])
+
+  useEffect(() => { fetchPickerEvents() }, [fetchPickerEvents])
+
   const [leads, setLeads] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -1448,44 +1486,29 @@ function LeadsPage({ showToast, onOpenLead }) {
   const [activeOnly, setActiveOnly] = useState(true)
   const [leadsPage, setLeadsPage] = useState(1)
 
-  // Active event used by "Convert to Attendee"
   const [activeEvent, setActiveEvent] = useState(null)
   const [activeEventLoading, setActiveEventLoading] = useState(true)
   const [convertingLeadId, setConvertingLeadId] = useState(null)
 
-  // ---------------------------------------------------------------------------
-  // Email campaign stage labels
-  // ---------------------------------------------------------------------------
   const [stageLabels, setStageLabels] = useState({})
-
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase
         .from('systems_tables')
         .select('config2, description')
         .eq('system_name', 'Email Outreach')
-
       if (!error && data) {
         const map = {}
-
-        data.forEach(r => {
-          map[(r.config2 || '').toString().trim()] = r.description
-        })
-
+        data.forEach(r => { map[(r.config2 || '').toString().trim()] = r.description })
         setStageLabels(map)
       }
     })()
   }, [])
 
-  const emailStageLabel = (code) =>
-    stageLabels[(code || '').toString().trim()] || code
+  const emailStageLabel = (code) => stageLabels[(code || '').toString().trim()] || code
 
-  // ---------------------------------------------------------------------------
-  // Load active event
-  // ---------------------------------------------------------------------------
   const fetchActiveEvent = useCallback(async () => {
     setActiveEventLoading(true)
-
     const { data, error } = await supabase
       .from('events')
       .select('event_id, event_name, start_date, end_date, status')
@@ -1493,85 +1516,67 @@ function LeadsPage({ showToast, onOpenLead }) {
       .order('start_date', { ascending: false })
       .limit(1)
       .maybeSingle()
-
     if (error) {
       showToast(`Couldn't load active event: ${error.message}`, true)
       setActiveEvent(null)
     } else {
       setActiveEvent(data || null)
     }
-
     setActiveEventLoading(false)
   }, [showToast])
 
-  useEffect(() => {
-    fetchActiveEvent()
-  }, [fetchActiveEvent])
+  useEffect(() => { fetchActiveEvent() }, [fetchActiveEvent])
 
-  // ---------------------------------------------------------------------------
-  // Load leads
-  // ---------------------------------------------------------------------------
-const fetchLeads = useCallback(async () => {
-  setLoading(true)
-  setError(null)
-  const PAGE = 1000
-  let allRows = []
-  let from = 0
-  while (true) {
-    const { data, error } = await supabase
-      .from('leads')
-      .select('*, people(first_name, last_name, owner_email)')
-      .order('created_at', { ascending: false })
-      .range(from, from + PAGE - 1)
-    if (error) { setError(error.message); setLoading(false); return }
-    allRows = allRows.concat(data || [])
-    if (!data || data.length < PAGE) break
-    from += PAGE
-  }
-  setLeads(allRows)
-  setLoading(false)
-}, [])
+  // Fetches leads for the currently selected event only. 'NONE' means
+  // general leads with no event_id.
+  const fetchLeads = useCallback(async () => {
+    if (!selectedEventId) return
+    setLoading(true)
+    setError(null)
+    const PAGE = 1000
+    let allRows = []
+    let from = 0
+    while (true) {
+      let query = supabase
+        .from('leads')
+        .select('*, people(first_name, last_name, owner_email)')
+        .order('created_at', { ascending: false })
+        .range(from, from + PAGE - 1)
+      query = selectedEventId === 'NONE' ? query.is('event_id', null) : query.eq('event_id', selectedEventId)
+      const { data, error } = await query
+      if (error) { setError(error.message); setLoading(false); return }
+      allRows = allRows.concat(data || [])
+      if (!data || data.length < PAGE) break
+      from += PAGE
+    }
+    setLeads(allRows)
+    setLoading(false)
+  }, [selectedEventId])
 
-  useEffect(() => {
-    fetchLeads()
-  }, [fetchLeads])
+  useEffect(() => { fetchLeads() }, [fetchLeads])
 
-  // ---------------------------------------------------------------------------
-  // Convert Lead -> Attendee
-  // ---------------------------------------------------------------------------
   const convertLeadToAttendee = async (lead) => {
     if (!activeEvent) {
       showToast('No active event found', true)
       return
     }
-
     setConvertingLeadId(lead.lead_id)
-
-    // Check whether this person is already an attendee
-    // for the active event.
     const { data: existing, error: checkError } = await supabase
       .from('event_participants')
       .select('participant_id')
       .eq('event_id', activeEvent.event_id)
       .eq('person_id', lead.person_id)
       .maybeSingle()
-
     if (checkError) {
       setConvertingLeadId(null)
       showToast(`Couldn't check attendee: ${checkError.message}`, true)
       return
     }
-
     if (existing) {
       setConvertingLeadId(null)
-      showToast(
-        `This person is already an attendee for ${activeEvent.event_name}`,
-        true
-      )
+      showToast(`This person is already an attendee for ${activeEvent.event_name}`, true)
       return
     }
-
-    // Add person to active event
     const { error: insertError } = await supabase
       .from('event_participants')
       .insert({
@@ -1579,323 +1584,185 @@ const fetchLeads = useCallback(async () => {
         person_id: lead.person_id,
         company_id: lead.company_id || null,
         role: 'Attendee',
-        status: 'Invited'
+        status: 'Invited',
       })
-
     setConvertingLeadId(null)
-
-    if (insertError) {
-      showToast(
-        `Couldn't add attendee: ${insertError.message}`,
-        true
-      )
-      return
-    }
-
-    showToast(
-      `${lead.people?.first_name || 'Person'} added to ${activeEvent.event_name}`
-    )
+    if (insertError) { showToast(`Couldn't add attendee: ${insertError.message}`, true); return }
+    showToast(`${lead.people?.first_name || 'Person'} added to ${activeEvent.event_name}`)
   }
 
-  // ---------------------------------------------------------------------------
-  // Filters
-  // ---------------------------------------------------------------------------
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
-
     return leads.filter(l => {
-      if (statusFilter && l.lead_status !== statusFilter) {
-        return false
-      }
-
-      // Active = not Unsubscribed
-      if (activeOnly && l.lead_status === 'Unsubscribed') {
-        return false
-      }
-
-      if (!q) {
-        return true
-      }
-
-      const personName =
-        `${l.people?.first_name || ''} ${l.people?.last_name || ''}`
-
-      return `${personName} ${l.lead_purpose || ''} ${l.people?.owner_email || ''}`
-        .toLowerCase()
-        .includes(q)
+      if (statusFilter && l.lead_status !== statusFilter) return false
+      if (activeOnly && l.lead_status === 'Unsubscribed') return false
+      if (!q) return true
+      const personName = `${l.people?.first_name || ''} ${l.people?.last_name || ''}`
+      return `${personName} ${l.lead_purpose || ''} ${l.people?.owner_email || ''}`.toLowerCase().includes(q)
     })
   }, [leads, search, statusFilter, activeOnly])
 
-  useEffect(() => {
-    setLeadsPage(1)
-  }, [search, statusFilter, activeOnly])
+  useEffect(() => { setLeadsPage(1) }, [search, statusFilter, activeOnly, selectedEventId])
 
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
+  const selectedEventLabel = useMemo(() => {
+    if (selectedEventId === 'NONE') return 'General leads (no event)'
+    const ev = pickerEvents.find(e => e.event_id === selectedEventId)
+    return ev ? ev.event_name : selectedEventId
+  }, [selectedEventId, pickerEvents])
+
+  // -------------------------------------------------------------------------
+  // Step 1: event picker — shown until an event (or "no event") is chosen.
+  // -------------------------------------------------------------------------
+  if (!selectedEventId) {
+    return (
+      <div>
+        <p className="crm-confirm-note" style={{ marginBottom: 16 }}>
+          Pick an event to see its leads.
+        </p>
+        {pickerEventsLoading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading events…</div>}
+        {!pickerEventsLoading && (
+          <div className="crm-confirm-list" style={{ maxHeight: 'none' }}>
+            <div
+              className="crm-confirm-row"
+              style={{ cursor: 'pointer' }}
+              onClick={() => setSelectedEventId('NONE')}
+            >
+              <div>
+                <div className="crm-confirm-row-name">General leads (no event)</div>
+                <div className="crm-confirm-row-sub">Leads not tied to a specific event</div>
+              </div>
+            </div>
+            {pickerEvents.map(e => (
+              <div
+                key={e.event_id}
+                className="crm-confirm-row"
+                style={{ cursor: 'pointer' }}
+                onClick={() => setSelectedEventId(e.event_id)}
+              >
+                <div>
+                  <div className="crm-confirm-row-name">{e.event_name}</div>
+                  <div className="crm-confirm-row-sub">{formatDate(e.start_date)}</div>
+                </div>
+                <Badge value={e.status} />
+              </div>
+            ))}
+            {pickerEvents.length === 0 && (
+              <div className="crm-confirm-empty">No events yet — create one first.</div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 2: leads table, scoped to selectedEventId.
+  // -------------------------------------------------------------------------
   return (
     <div>
       <div className="crm-toolbar">
+        <button className="crm-btn-secondary" onClick={() => setSelectedEventId(null)}>
+          ← Change event
+        </button>
+        <span className="crm-count-note" style={{ marginLeft: 0 }}>Viewing: <b style={{ color: 'var(--ink-950)' }}>{selectedEventLabel}</b></span>
 
         <div className="crm-search-box">
-          <Search
-            size={15}
-            style={{ color: 'var(--ink-400)' }}
-          />
-
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search person, purpose, owner…"
-          />
+          <Search size={15} style={{ color: 'var(--ink-400)' }} />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search person, purpose, owner…" />
         </div>
 
-        <select
-          className="crm-filter-select"
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-        >
+        <select className="crm-filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="">All statuses</option>
-
-          {LEAD_STATUS_OPTIONS.map(s => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
+          {LEAD_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
 
-        <button
-          className={`crm-toggle-chip${activeOnly ? ' on' : ''}`}
-          onClick={() => setActiveOnly(v => !v)}
-        >
+        <button className={`crm-toggle-chip${activeOnly ? ' on' : ''}`} onClick={() => setActiveOnly(v => !v)}>
           {activeOnly ? <Check size={13} /> : null}
           Active campaigns only
         </button>
 
-        {/* Active event indicator */}
         <span className="crm-count-note">
-          {activeEventLoading
-            ? 'Loading active event…'
-            : activeEvent
-              ? `Active event: ${activeEvent.event_name}`
-              : 'No active event'}
+          {activeEventLoading ? 'Loading active event…' : activeEvent ? `Active event: ${activeEvent.event_name}` : 'No active event'}
         </span>
 
-        <span className="crm-count-note">
-          {filtered.length} of {leads.length}
-        </span>
+        <span className="crm-count-note">{filtered.length} of {leads.length}</span>
       </div>
 
-      {loading && (
-        <div className="crm-loading">
-          <Loader2 size={16} className="crm-spin" />
-          Loading leads…
-        </div>
-      )}
-
-      {error && (
-        <div className="crm-error">
-          Couldn't load leads: {error}
-        </div>
-      )}
+      {loading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading leads…</div>}
+      {error && <div className="crm-error">Couldn't load leads: {error}</div>}
 
       {!loading && !error && (
         <div className="crm-table-wrap">
           <table className="crm-table">
-
             <thead>
               <tr>
-                {[
-                  'Person',
-                  'Purpose',
-                  'Status',
-                  'Nurture',
-                  'Owner',
-                  'Cold calling',
-                  'Email',
-                  'Social',
-                  ''
-                ].map(h => (
+                {['Person', 'Purpose', 'Status', 'Nurture', 'Owner', 'Cold calling', 'Email', 'Social', ''].map(h => (
                   <th key={h}>{h}</th>
                 ))}
               </tr>
             </thead>
-
             <tbody>
               {paginate(filtered, leadsPage).map(l => {
-
-                const personName =
-                  `${l.people?.first_name || ''} ${l.people?.last_name || ''}`
-                    .trim() || '—'
-
-                const isConverting =
-                  convertingLeadId === l.lead_id
-
+                const personName = `${l.people?.first_name || ''} ${l.people?.last_name || ''}`.trim() || '—'
+                const isConverting = convertingLeadId === l.lead_id
                 return (
-                  <tr
-                    key={l.lead_id}
-                    className="clickable"
-                    onClick={() => onOpenLead(l.lead_id)}
-                  >
-
-                    <td
-                      style={{
-                        fontWeight: 500,
-                        color: 'var(--ink-950)'
-                      }}
-                    >
-                      {personName}
-                    </td>
-
-                    <td>
-                      {l.lead_purpose || '—'}
-                    </td>
-
-                    <td>
-                      <Badge value={l.lead_status} />
-                    </td>
-
-                    <td>
-                      <Badge value={l.nurture_stage} />
-                    </td>
-
-                    <td>
-                      {l.people?.owner_email || '—'}
-                    </td>
-
+                  <tr key={l.lead_id} className="clickable" onClick={() => onOpenLead(l.lead_id)}>
+                    <td style={{ fontWeight: 500, color: 'var(--ink-950)' }}>{personName}</td>
+                    <td>{l.lead_purpose || '—'}</td>
+                    <td><Badge value={l.lead_status} /></td>
+                    <td><Badge value={l.nurture_stage} /></td>
+                    <td>{l.people?.owner_email || '—'}</td>
                     <td>
                       {l.cold_calling ? (
-                        <Badge
-                          value={
-                            l.cold_calling_stage ||
-                            'Not Pitched'
-                          }
-                        />
+                        <Badge value={l.cold_calling_stage || 'Not Pitched'} />
                       ) : (
-                        <span
-                          style={{
-                            color: 'var(--ink-400)'
-                          }}
-                        >
-                          Off
-                        </span>
+                        <span style={{ color: 'var(--ink-400)' }}>Off</span>
                       )}
                     </td>
-
                     <td>
                       {l.email_campaign ? (
-                        <Badge
-                          value={
-                            emailStageLabel(
-                              l.email_campaign_stage
-                            ) || 'Queued'
-                          }
-                        />
+                        <Badge value={emailStageLabel(l.email_campaign_stage) || 'Queued'} />
                       ) : (
-                        <span
-                          style={{
-                            color: 'var(--ink-400)'
-                          }}
-                        >
-                          Off
-                        </span>
+                        <span style={{ color: 'var(--ink-400)' }}>Off</span>
                       )}
                     </td>
-
                     <td>
                       {l.social_media ? (
-                        <Badge
-                          value={
-                            l.social_media_stage ||
-                            'Queued'
-                          }
-                        />
+                        <Badge value={l.social_media_stage || 'Queued'} />
                       ) : (
-                        <span
-                          style={{
-                            color: 'var(--ink-400)'
-                          }}
-                        >
-                          Off
-                        </span>
+                        <span style={{ color: 'var(--ink-400)' }}>Off</span>
                       )}
                     </td>
-
-                    {/* Actions */}
                     <td>
-                      <div
-                        style={{
-                          display: 'flex',
-                          gap: 6,
-                          alignItems: 'center'
-                        }}
-                      >
-
-                        {/* View lead */}
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         <button
                           className="crm-icon-action"
-                          onClick={e => {
-                            e.stopPropagation()
-                            onOpenLead(l.lead_id)
-                          }}
+                          onClick={e => { e.stopPropagation(); onOpenLead(l.lead_id) }}
                           aria-label="View details"
                           title="View lead details"
                         >
                           <Eye size={14} />
                         </button>
-
-                        {/* Convert to attendee */}
                         <button
                           className="crm-icon-action"
-                          onClick={e => {
-                            e.stopPropagation()
-                            convertLeadToAttendee(l)
-                          }}
-                          disabled={
-                            isConverting ||
-                            activeEventLoading ||
-                            !activeEvent
-                          }
+                          onClick={e => { e.stopPropagation(); convertLeadToAttendee(l) }}
+                          disabled={isConverting || activeEventLoading || !activeEvent}
                           aria-label="Convert to attendee"
-                          title={
-                            activeEvent
-                              ? `Add to ${activeEvent.event_name}`
-                              : 'No active event'
-                          }
+                          title={activeEvent ? `Add to ${activeEvent.event_name}` : 'No active event'}
                         >
-                          {isConverting ? (
-                            <Loader2
-                              size={14}
-                              className="crm-spin"
-                            />
-                          ) : (
-                            <UserPlus size={14} />
-                          )}
+                          {isConverting ? <Loader2 size={14} className="crm-spin" /> : <UserPlus size={14} />}
                         </button>
-
                       </div>
                     </td>
-
                   </tr>
                 )
               })}
-
               {filtered.length === 0 && (
-                <tr className="crm-empty-row">
-                  <td colSpan={9}>
-                    No leads match these filters.
-                  </td>
-                </tr>
+                <tr className="crm-empty-row"><td colSpan={9}>No leads match these filters.</td></tr>
               )}
-
             </tbody>
           </table>
-
-          <Pagination
-            page={leadsPage}
-            setPage={setLeadsPage}
-            total={filtered.length}
-          />
+          <Pagination page={leadsPage} setPage={setLeadsPage} total={filtered.length} />
         </div>
       )}
     </div>
@@ -1906,7 +1773,7 @@ const fetchLeads = useCallback(async () => {
 // lists any leads already created from them, and offers a one-click
 // "Convert to lead" action that opens a fully-editable confirm modal.
 // ============================================================================
-function PersonDetailPage({ personId, showToast, onOpenLead }) {
+function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLeadRemoved }) {
   const [person, setPerson] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -1917,8 +1784,6 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
   const [leads, setLeads] = useState([])
   const [leadsLoading, setLeadsLoading] = useState(true)
 
-  // Events this specific person is attached to (event_participants rows),
-  // shown as a collapsible section alongside their leads.
   const [events, setEvents] = useState([])
   const [eventsLoading, setEventsLoading] = useState(true)
   const [showEvents, setShowEvents] = useState(false)
@@ -1974,68 +1839,40 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
- const save = async () => {
-  setSaving(true)
-
-  let companyId = company?.company_id || null
-
-  // If user typed a company name but there is no company_id,
-  // find the existing company or create a new one.
-  if (!companyId && company?.company_name?.trim()) {
-    const name = company.company_name.trim()
-
-    const { data: existing, error: lookupError } = await supabase
-      .from('companies')
-      .select('company_id')
-      .ilike('company_name', name)
-      .limit(1)
-      .maybeSingle()
-
-    if (lookupError) {
-      setSaving(false)
-      showToast(`Couldn't check company: ${lookupError.message}`, true)
-      return
-    }
-
-    if (existing) {
-      companyId = existing.company_id
-    } else {
-      const { data: created, error: createError } = await supabase
+  const save = async () => {
+    setSaving(true)
+    let companyId = company?.company_id || null
+    if (!companyId && company?.company_name?.trim()) {
+      const name = company.company_name.trim()
+      const { data: existing, error: lookupError } = await supabase
         .from('companies')
-        .insert({ company_name: name })
         .select('company_id')
-        .single()
-
-      if (createError) {
-        setSaving(false)
-        showToast(`Couldn't create company: ${createError.message}`, true)
-        return
+        .ilike('company_name', name)
+        .limit(1)
+        .maybeSingle()
+      if (lookupError) { setSaving(false); showToast(`Couldn't check company: ${lookupError.message}`, true); return }
+      if (existing) {
+        companyId = existing.company_id
+      } else {
+        const { data: created, error: createError } = await supabase
+          .from('companies')
+          .insert({ company_name: name })
+          .select('company_id')
+          .single()
+        if (createError) { setSaving(false); showToast(`Couldn't create company: ${createError.message}`, true); return }
+        companyId = created.company_id
       }
-
-      companyId = created.company_id
     }
+    const { error } = await supabase
+      .from('people')
+      .update({ ...form, company_id: companyId, updated_at: new Date().toISOString() })
+      .eq('person_id', personId)
+    setSaving(false)
+    if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
+    showToast('Person updated')
+    load()
   }
 
-  // Now save the person with the correct company_id
-  const { error } = await supabase
-    .from('people')
-    .update({
-      ...form,
-      company_id: companyId,
-      updated_at: new Date().toISOString()
-    })
-    .eq('person_id', personId)
-
-  setSaving(false)
-
-  if (error) {
-    showToast(`Couldn't save: ${error.message}`, true)
-    return
-  }
-
-  showToast('Person updated')
-  load()
-}
   const createLead = async (convertForm) => {
     setCreatingLead(true)
     const { data, error } = await supabase
@@ -2045,12 +1882,17 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
       .single()
     setCreatingLead(false)
     if (error) { showToast(`Couldn't create lead: ${error.message}`, true); return }
+
+    // Keep the People page's hidden-leads map in sync with this flow too.
+    onLeadCreated && onLeadCreated(personId, 'BANCEE26')
+
     showToast(
       'Lead created',
       false,
       async () => {
         const { error: undoError } = await supabase.from('leads').delete().eq('lead_id', data.lead_id)
         if (undoError) { showToast(`Couldn't undo: ${undoError.message}`, true); return }
+        onLeadRemoved && onLeadRemoved(personId, 'BANCEE26')
         showToast('Undone — lead removed')
         loadLeads()
       }
@@ -2180,7 +2022,6 @@ function PersonDetailPage({ personId, showToast, onOpenLead }) {
     </div>
   )
 }
-
 // ============================================================================
 // LEAD DETAIL CARD — the actual editable lead content, shared by the full
 // Lead detail page and by the Person detail page (which embeds one of these
