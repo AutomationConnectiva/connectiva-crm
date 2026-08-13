@@ -1556,28 +1556,22 @@ function LeadsPage({ showToast, onOpenLead }) {
   useEffect(() => { fetchActiveEvent() }, [fetchActiveEvent])
 
   // Fetches leads for the currently selected event only. 'NONE' means
-  // general leads with no event_id.
+  // general leads with no event_id. Single request with an explicit high
+  // .range() ceiling (not a page loop) so PostgREST's default row cap can't
+  // silently truncate results once lead counts grow.
   const fetchLeads = useCallback(async () => {
     if (!selectedEventId) return
     setLoading(true)
     setError(null)
-    const PAGE = 1000
-    let allRows = []
-    let from = 0
-    while (true) {
-      let query = supabase
-        .from('leads')
-        .select('*, people(first_name, last_name, owner_email)')
-        .order('created_at', { ascending: false })
-        .range(from, from + PAGE - 1)
-      query = selectedEventId === 'NONE' ? query.is('event_id', null) : query.eq('event_id', selectedEventId)
-      const { data, error } = await query
-      if (error) { setError(error.message); setLoading(false); return }
-      allRows = allRows.concat(data || [])
-      if (!data || data.length < PAGE) break
-      from += PAGE
-    }
-    setLeads(allRows)
+    let query = supabase
+      .from('leads')
+      .select('*, people(first_name, last_name, owner_email)')
+      .order('created_at', { ascending: false })
+      .range(0, 49999)
+    query = selectedEventId === 'NONE' ? query.is('event_id', null) : query.eq('event_id', selectedEventId)
+    const { data, error } = await query
+    if (error) { setError(error.message); setLoading(false); return }
+    setLeads(data || [])
     setLoading(false)
   }, [selectedEventId])
 
