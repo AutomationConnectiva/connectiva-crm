@@ -905,25 +905,26 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   const wasSidebarCollapsedRef = useRef(sidebarCollapsed)
 
   const fetchPeople = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    const PAGE = 1000
-    let allRows = []
-    let from = 0
-    while (true) {
-      const { data, error } = await supabase
-        .from('people')
-        .select('*, companies(company_name)')
-        .order('created_at', { ascending: false })
-        .range(from, from + PAGE - 1)
-      if (error) { setError(error.message); setLoading(false); return }
-      allRows = allRows.concat(data || [])
-      if (!data || data.length < PAGE) break
-      from += PAGE
-    }
-    setPeople(allRows)
-    setLoading(false)
-  }, [])
+  setLoading(true)
+  setError(null)
+  const PAGE = 1000
+  let allRows = []
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('people')
+      .select('*, companies(company_name)')
+      .order('created_at', { ascending: false })
+      .order('person_id', { ascending: true })   // ← tiebreaker, makes sort order stable
+      .range(from, from + PAGE - 1)
+    if (error) { setError(error.message); setLoading(false); return }
+    allRows = allRows.concat(data || [])
+    if (!data || data.length < PAGE) break
+    from += PAGE
+  }
+  setPeople(allRows)
+  setLoading(false)
+}, [])
 
   const fetchEvents = useCallback(async () => {
     setEventsLoading(true)
