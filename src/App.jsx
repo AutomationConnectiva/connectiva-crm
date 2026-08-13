@@ -939,6 +939,10 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   }
 
   const startConvert = () => {
+    if (!leadPurposeFilter) {
+    showToast('Pick a purpose from the dropdown first', true)
+    return
+  }
     wasSidebarCollapsedRef.current = sidebarCollapsed
     setSidebarCollapsed(true)
     setMode('select')
@@ -1022,7 +1026,6 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
 
   const submitConvert = async () => {
     setConverting(true)
-    const eventIdToLink = linkEventId || null
     const selectedPeople = people.filter(p => selectedPersonIds.has(p.person_id))
     const rows = selectedPeople.map(p => ({
       person_id: p.person_id,
@@ -1030,6 +1033,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
       event_id: 'BANCEE26',
       lead_status: 'New',
       nurture_stage: 'Outreach',
+      lead_purpose: leadPurposeFilter,
       ...buildChannelRowFields(effectiveChannelValue, p.person_id),
     }))
     const { data: inserted, error } = await supabase.from('leads').insert(rows).select('lead_id, person_id')
@@ -1037,7 +1041,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     if (error) { showToast(`Couldn't create leads: ${error.message}`, true); return }
     setLeadEventMap(prev => {
       const next = new Map(prev)
-      const key = eventIdToLink || 'NONE'
+      const key = 'BANCEE26'
       rows.forEach(r => {
         const set = new Set(next.get(r.person_id) || [])
         set.add(key)
@@ -1056,7 +1060,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
             if (undoError) { showToast(`Couldn't undo: ${undoError.message}`, true); return }
             setLeadEventMap(prev => {
               const next = new Map(prev)
-              const key = eventIdToLink || 'NONE'
+              const key = 'BANCEE26'
               rows.forEach(r => {
                 const set = new Set(next.get(r.person_id) || [])
                 set.delete(key)
@@ -1095,8 +1099,8 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
         ) : (
           <>
             <select className="crm-filter-select" value={leadPurposeFilter} onChange={(e) => setLeadPurposeFilter(e.target.value)}>
-              <option value="">All purposes</option>
-              {LEAD_PURPOSE_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+              <option value="">Select purpose…</option>
+               {LEAD_PURPOSE_CHOICES.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
             <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 18px' }} onClick={startConvert}>
               <UserPlus size={15} /> Convert to lead
