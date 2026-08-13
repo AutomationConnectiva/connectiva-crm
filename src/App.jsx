@@ -12,12 +12,12 @@ import {
 // swap the arrays' contents to match your real values whenever you confirm them.
 // ---------------------------------------------------------------------------
 const LEAD_STATUS_OPTIONS = ['New', 'Contacted', 'Unsubscribed']
-const NURTURE_STAGE_OPTIONS = ['Cold', 'Warming', 'Outreach']
+const NURTURE_STAGE_OPTIONS = ['Cold', 'Warming', 'Outreach', 'Confirmed']
 const EVENT_STATUS_OPTIONS = ['Planned', 'Active', 'Completed', 'Cancelled']
 const PARTICIPANT_ROLE_OPTIONS = ['Attendee', 'Speaker', 'Sponsor', 'Organizer']
 const PARTICIPANT_STATUS_OPTIONS = ['Invited', 'Confirmed', 'Attended', 'Cancelled']
-// people.industry — confirmed against the live schema, three values in use.
 const INDUSTRY_OPTIONS = ['Insurance', 'Banking', 'Finance']
+const LEAD_PURPOSE_CHOICES = ['Delegate Acquisition', 'Speaker Acquisition', 'Sponsor Acquisition']
 // people.owner_email — must exactly match what the Make.com send scenario
 // matches against (nabi@ / alia@ / abdool@ / chris@connectiva.events). A
 // free-text input here risks the exact same silent-mismatch bug found
@@ -759,21 +759,15 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   const [error, setError] = useState(null)
   const [peoplePage, setPeoplePage] = useState(1)
 
-  // TODO: replace with the real values from your DB. Run in Supabase SQL editor:
-  //   select distinct status from people order by status;
-  // or, if `status` is a Postgres enum type:
-  //   select unnest(enum_range(null::your_status_enum_name))::text as status;
   const STATUS_OPTIONS = useMemo(() => {
-  const set = new Set(people.map(p => p.status).filter(Boolean))
-  return Array.from(set).sort()
-}, [people])
-
+    const set = new Set(people.map(p => p.status).filter(Boolean))
+    return Array.from(set).sort()
+  }, [people])
 
   const LEAD_PURPOSE_OPTIONS = useMemo(() => {
-  const set = new Set(people.map(p => p.lead_purpose).filter(Boolean))
-  return Array.from(set).sort()
-}, [people])
-
+    const set = new Set(people.map(p => p.lead_purpose).filter(Boolean))
+    return Array.from(set).sort()
+  }, [people])
 
   const [columnFilters, setColumnFilters] = useState({
     name: '', email: '', job_title: '', industry: '', company: '', country: '', status: '',
@@ -781,65 +775,55 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   const [leadPurposeFilter, setLeadPurposeFilter] = useState('')
   const setColFilter = (key) => (e) => setColumnFilters(prev => ({ ...prev, [key]: e.target.value }))
 
-  // Existing leads, keyed by person_id -> Set of event_ids they're already
-  // linked to (a bare lead with no event uses the 'NONE' key). Drives both
-  // the "Lead" tag and which rows get disabled for the currently chosen event.
   const [leadEventMap, setLeadEventMap] = useState(new Map())
   const leadPersonIds = useMemo(() => new Set(leadEventMap.keys()), [leadEventMap])
 
-  // Events to link new leads to. Picking one disables anyone already a lead
-  // for that specific event (so you can't create a duplicate), while still
-  // leaving them selectable for a different event.
   const [events, setEvents] = useState([])
   const [eventsLoading, setEventsLoading] = useState(true)
   const [linkEventId, setLinkEventId] = useState('')
 
-  // person_id -> [{event_id, event_name, start_date, role, status}] across
-  // ALL events (event_participants already stores this — we're just
-  // querying across every event instead of one). Powers the "Past Events"
-  // column below, shown explicitly as event_id + role per tag.
   const [pastEventsByPerson, setPastEventsByPerson] = useState({})
   const [pastEventsLoading, setPastEventsLoading] = useState(true)
 
-  // Single-row inline edit (pencil icon).
+  // NEW: the currently Active event, used to hide anyone already converted
+  // to a lead for that event from the People page entirely (not just
+  // disabled during select mode — hidden everywhere on this page).
+  const [activeEventId, setActiveEventId] = useState(null)
+  const [activeEventLoading, setActiveEventLoading] = useState(true)
+
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [saving, setSaving] = useState(false)
 
-  // Bulk convert-to-lead flow: 'browse' | 'select'. The side panel only
-  // appears once at least one person is checked — it stays hidden otherwise.
   const [mode, setMode] = useState('browse')
   const [selectedPersonIds, setSelectedPersonIds] = useState(new Set())
   const [converting, setConverting] = useState(false)
 
-  // Bulk defaults for the three outreach channels — every channel starts ON.
   const [channelDefaults, setChannelDefaults] = useState(ALL_CHANNELS_ON)
   const [channelExceptions, setChannelExceptions] = useState(new Map())
 
-  // Remembers whether the sidebar was already collapsed before we entered
-  // convert mode, so leaving it restores exactly how it was.
   const wasSidebarCollapsedRef = useRef(sidebarCollapsed)
 
   const fetchPeople = useCallback(async () => {
-  setLoading(true)
-  setError(null)
-  const PAGE = 1000
-  let allRows = []
-  let from = 0
-  while (true) {
-    const { data, error } = await supabase
-      .from('people')
-      .select('*, companies(company_name)')
-      .order('created_at', { ascending: false })
-      .range(from, from + PAGE - 1)
-    if (error) { setError(error.message); setLoading(false); return }
-    allRows = allRows.concat(data || [])
-    if (!data || data.length < PAGE) break
-    from += PAGE
-  }
-  setPeople(allRows)
-  setLoading(false)
-}, [])
+    setLoading(true)
+    setError(null)
+    const PAGE = 1000
+    let allRows = []
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('people')
+        .select('*, companies(company_name)')
+        .order('created_at', { ascending: false })
+        .range(from, from + PAGE - 1)
+      if (error) { setError(error.message); setLoading(false); return }
+      allRows = allRows.concat(data || [])
+      if (!data || data.length < PAGE) break
+      from += PAGE
+    }
+    setPeople(allRows)
+    setLoading(false)
+  }, [])
 
   const fetchLeadEventMap = useCallback(async () => {
     const { data, error } = await supabase.from('leads').select('person_id, event_id')
@@ -861,10 +845,6 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     setEventsLoading(false)
   }, [])
 
-  // Pulls every event_participants row across all events, grouped by
-  // person_id, including event_id explicitly (not just the display name) —
-  // shown inline in the table so the exact event code + role is visible
-  // without hovering.
   const fetchPastEvents = useCallback(async () => {
     setPastEventsLoading(true)
     const { data, error } = await supabase
@@ -889,13 +869,24 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     setPastEventsLoading(false)
   }, [])
 
-  useEffect(() => {
-    fetchPeople(); fetchLeadEventMap(); fetchEvents(); fetchPastEvents()
-  }, [fetchPeople, fetchLeadEventMap, fetchEvents, fetchPastEvents])
+  // NEW: fetch the Active event's id.
+  const fetchActiveEventId = useCallback(async () => {
+    setActiveEventLoading(true)
+    const { data, error } = await supabase
+      .from('events')
+      .select('event_id')
+      .eq('status', 'Active')
+      .order('start_date', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!error) setActiveEventId(data?.event_id || null)
+    setActiveEventLoading(false)
+  }, [])
 
-  // Job title / company / country stay free-text LIKE '%filter%' searches.
-  // Industry, status, and lead purpose are exact-match dropdowns since
-  // they're fixed sets of values in the DB.
+  useEffect(() => {
+    fetchPeople(); fetchLeadEventMap(); fetchEvents(); fetchPastEvents(); fetchActiveEventId()
+  }, [fetchPeople, fetchLeadEventMap, fetchEvents, fetchPastEvents, fetchActiveEventId])
+
   const filtered = useMemo(() => {
     const f = columnFilters
     const name = f.name.toLowerCase().trim()
@@ -904,6 +895,9 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     const company = f.company.toLowerCase().trim()
     const country = f.country.toLowerCase().trim()
     return people.filter(p => {
+      // NEW: hide anyone already a lead tied to the Active event.
+      if (activeEventId && leadEventMap.get(p.person_id)?.has(activeEventId)) return false
+
       const companyName = p.companies?.company_name || ''
       if (name && !`${p.first_name} ${p.last_name}`.toLowerCase().includes(name)) return false
       if (email && !(p.email || '').toLowerCase().includes(email)) return false
@@ -912,24 +906,18 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
       if (company && !companyName.toLowerCase().includes(company)) return false
       if (country && !(p.country || '').toLowerCase().includes(country)) return false
       if (f.status && p.status !== f.status) return false
-      // TODO: confirm the real field name/path for lead purpose on `p`
-      // (e.g. p.lead_purpose vs a nested join like p.leads?.purpose).
       if (leadPurposeFilter && p.lead_purpose !== leadPurposeFilter) return false
       return true
     })
-  }, [people, columnFilters, leadPurposeFilter])
+  }, [people, columnFilters, leadPurposeFilter, activeEventId, leadEventMap])
 
   useEffect(() => { setPeoplePage(1) }, [columnFilters, leadPurposeFilter])
 
-  // A person is off-limits for the currently selected event if they're
-  // already a lead tied to that same event (or already a bare/no-event lead,
-  // when no event is chosen here).
   const isAlreadyLeadForEvent = (personId) => {
     const key = linkEventId || 'NONE'
     return leadEventMap.get(personId)?.has(key) || false
   }
 
-  // ---- single-row inline edit ----
   const startEdit = (p) => {
     setEditingId(p.person_id)
     setEditForm({
@@ -950,7 +938,6 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     showToast('Person updated')
   }
 
-  // ---- bulk convert-to-lead ----
   const startConvert = () => {
     wasSidebarCollapsedRef.current = sidebarCollapsed
     setSidebarCollapsed(true)
@@ -986,10 +973,19 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     })
   }
   const selectAllFiltered = () => setSelectedPersonIds(new Set(filtered.filter(p => !isAlreadyLeadForEvent(p.person_id)).map(p => p.person_id)))
+
+  // NEW: select-all limited to whichever page you're currently viewing —
+  // adds to (rather than replaces) whatever's already selected, so you can
+  // page through and build up a selection across several pages.
+  const selectAllOnPage = () => {
+    const pageIds = paginate(filtered, peoplePage)
+      .filter(p => !isAlreadyLeadForEvent(p.person_id))
+      .map(p => p.person_id)
+    setSelectedPersonIds(prev => new Set([...prev, ...pageIds]))
+  }
+
   const clearSelection = () => { setSelectedPersonIds(new Set()); setChannelExceptions(new Map()) }
 
-  // Switching which event these leads link to may invalidate some picks —
-  // drop anyone who's already a lead for the newly chosen event.
   const handleLinkEventChange = (e) => {
     const newEventId = e.target.value
     const key = newEventId || 'NONE'
@@ -1001,16 +997,12 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     setLinkEventId(newEventId)
   }
 
-  // Flips a channel for everyone in this batch at once. Social/LinkedIn is
-  // not a confirmed live automation yet — leave its default off-limits to
-  // toggling here so we don't imply it does something it doesn't.
   const toggleChannelDefault = (key) => {
     const cf = CHANNEL_FIELDS.find(c => c.key === key)
     if (!cf?.live) return
     setChannelDefaults(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
-  // Flips a channel for just one person, as an exception to the batch default.
   const toggleChannelException = (personId, key) => {
     const cf = CHANNEL_FIELDS.find(c => c.key === key)
     if (!cf?.live) return
@@ -1038,9 +1030,6 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
       event_id: eventIdToLink,
       lead_status: 'New',
       nurture_stage: 'Outreach',
-      // Follows the confirmed Make.com contract: boolean = true, stage = null.
-      // Never write a placeholder string here — Make's scenarios key off
-      // "stage IS NULL" to know a channel hasn't been worked yet.
       ...buildChannelRowFields(effectiveChannelValue, p.person_id),
     }))
     const { data: inserted, error } = await supabase.from('leads').insert(rows).select('lead_id, person_id')
@@ -1058,9 +1047,6 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     })
     const newLeadIds = (inserted || []).map(r => r.lead_id)
     const count = rows.length
-    // Undo window: these leads are seconds old, so a hard delete is safe —
-    // there's no history on them yet to lose. Note this can't un-ring the
-    // Make.com "linkedin-outreach-trigger" webhook if it already fired.
     showToast(
       `${count} ${count === 1 ? 'lead' : 'leads'} created`,
       false,
@@ -1090,7 +1076,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
   }
 
   const selecting = mode === 'select'
-  const COLUMN_COUNT = 10 // Name, Email, Job title, Industry, Company, Country, LinkedIn, Status, Past Events, actions
+  const COLUMN_COUNT = selecting ? 11 : 10
 
   const table = (
     <div>
@@ -1101,6 +1087,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
               <option value="">No event (general lead)</option>
               {events.map(e => <option key={e.event_id} value={e.event_id}>{e.event_name} ({formatDate(e.start_date)})</option>)}
             </select>
+            <button className="crm-toggle-chip" onClick={selectAllOnPage}>Select all on this page</button>
             <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({filtered.filter(p => !isAlreadyLeadForEvent(p.person_id)).length})</button>
             {selectedPersonIds.size > 0 && <button className="crm-toggle-chip" onClick={clearSelection}>Clear selection</button>}
             <button className="crm-btn-secondary" onClick={cancelConvert}>Cancel</button>
@@ -1128,7 +1115,7 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
             <thead>
               <tr>
                 {selecting && <th style={{ width: 36 }}></th>}
-                {selecting && <th style={{ width: 64 }}></th>}
+                {selecting && <th style={{ width: 76 }}></th>}
                 <th>Name</th>
                 <th>Email</th>
                 <th>Job title</th>
@@ -1173,23 +1160,23 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 const disabledForEvent = selecting && isAlreadyLeadForEvent(p.person_id)
                 const history = pastEventsByPerson[p.person_id] || []
 
-                // Shared "Past Events" cell — same rendering whether the row
-                // is in edit mode or not. Shows event_id + role explicitly,
-                // one small tag per event, instead of a hidden-in-tooltip count.
-               const pastEventsCell = (
-                <td>
-               {pastEventsLoading ? (
-               <span className="crm-muted">…</span>
-                ) : history.length === 0 ? (
-               <span className="crm-muted">—</span>
-                ) : (
-                   history.map(h => h.event_id).join(', ')
-                   )}
-                </td>
+                const pastEventsCell = (
+                  <td>
+                    {pastEventsLoading ? (
+                      <span className="crm-muted">…</span>
+                    ) : history.length === 0 ? (
+                      <span className="crm-muted">—</span>
+                    ) : (
+                      history.map(h => h.event_id).join(', ')
+                    )}
+                  </td>
                 )
+
                 if (isEditing) {
                   return (
                     <tr key={p.person_id} className="editing">
+                      {selecting && <td></td>}
+                      {selecting && <td></td>}
                       <td>
                         <input className="crm-cell-input" value={editForm.first_name} onChange={e => setEditForm({ ...editForm, first_name: e.target.value })} placeholder="First name" />
                         <input className="crm-cell-input" value={editForm.last_name} onChange={e => setEditForm({ ...editForm, last_name: e.target.value })} placeholder="Last name" />
@@ -1245,6 +1232,28 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                         />
                       </td>
                     )}
+                    {selecting && (
+                      <td>
+                        <div className="crm-row-actions">
+                          <button
+                            className="crm-icon-action"
+                            onClick={(e) => { e.stopPropagation(); onOpenPerson(p.person_id) }}
+                            aria-label="View details"
+                            title="View details"
+                          >
+                            <Eye size={14} />
+                          </button>
+                          <button
+                            className="crm-icon-action"
+                            onClick={(e) => { e.stopPropagation(); startEdit(p) }}
+                            aria-label="Edit person"
+                            title="Edit"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                     <td>
                       <div className="crm-name-cell">
                         <div className="crm-avatar" style={{ background: av.bg, color: av.fg }}>{initials(p.first_name, p.last_name)}</div>
@@ -1281,7 +1290,6 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     </div>
   )
 
-  // The side panel stays hidden entirely until at least one person is picked.
   if (!selecting || selectedPersonIds.size === 0) return table
 
   const selectedItems = people
@@ -2149,10 +2157,6 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
   const [activities, setActivities] = useState([])
   const [activitiesLoading, setActivitiesLoading] = useState(true)
 
-  // Same code -> description lookup as the Leads table, so the email
-  // channel's stage badge reads "1st Email Campaign" instead of "2.2" here
-  // too — this card is shared by both the Lead detail page and the
-  // per-person embedded view, so the fix only needs to live in one place.
   const [stageLabels, setStageLabels] = useState({})
   useEffect(() => {
     (async () => {
@@ -2208,9 +2212,6 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
 
   const save = async () => {
     setSaving(true)
-    // Deliberately excludes the three *_stage columns — those are
-    // automation-owned and never part of this form's payload, so a routine
-    // save can never overwrite whatever the automations last wrote there.
     const { error } = await supabase.from('leads').update({ ...form, updated_at: new Date().toISOString() }).eq('lead_id', leadId)
     setSaving(false)
     if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
@@ -2263,7 +2264,13 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
           </div>
         </div>
         <div className="crm-form-row">
-          <div><FieldLabel>Purpose</FieldLabel><input className="crm-input" value={form.lead_purpose} onChange={set('lead_purpose')} /></div>
+          <div>
+            <FieldLabel>Purpose</FieldLabel>
+            <select className="crm-select" value={form.lead_purpose} onChange={set('lead_purpose')}>
+              <option value="">—</option>
+              {LEAD_PURPOSE_CHOICES.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
           <div><FieldLabel>Owner</FieldLabel><input className="crm-input" value={form.owner} onChange={set('owner')} /></div>
         </div>
 
@@ -2276,9 +2283,6 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
             {CHANNEL_FIELDS.map(cf => {
               const boolValue = form[cf.boolKey]
               const rawStageValue = lead[cf.key]
-              // Only email_campaign_stage uses the numeric-code system —
-              // cold_calling_stage and social_media_stage are already
-              // written as plain readable strings by their automations.
               const stageValue = cf.key === 'email_campaign_stage'
                 ? (stageLabels[(rawStageValue || '').toString().trim()] || rawStageValue)
                 : rawStageValue
@@ -2353,7 +2357,6 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
     </div>
   )
 }
-
 // ============================================================================
 // LEAD DETAIL — full page wrapper around LeadDetailCard.
 // ============================================================================
