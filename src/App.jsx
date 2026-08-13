@@ -783,8 +783,6 @@ const fetchLeadEventMap = useCallback(async () => {
              onOpenPerson={openPerson}
              sidebarCollapsed={collapsed}
              setSidebarCollapsed={setCollapsed}
-             leadEventMap={leadEventMap}
-             setLeadEventMap={setLeadEventMap}
            />
           </div>
           )}
@@ -849,8 +847,14 @@ function SidebarContent({ collapsed, setCollapsed, activePage, goTo, onCloseMobi
 // people scan this table for; industry (Insurance / Banking / Finance) is,
 // and it's filterable.
 // ============================================================================
-function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarCollapsed, leadEventMap, setLeadEventMap }) {
+function PeoplePage({
+  showToast,
+  onOpenPerson,
+  sidebarCollapsed,
+  setSidebarCollapsed,
+}) {
   const [people, setPeople] = useState([])
+  const [leadPersonIds, setLeadPersonIds] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [peoplePage, setPeoplePage] = useState(1)
@@ -864,21 +868,29 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     const set = new Set(people.map(p => p.lead_purpose).filter(Boolean))
     return Array.from(set).sort()
   }, [people])
+
   const COMBINED_PURPOSE_OPTIONS = useMemo(() => {
     const set = new Set([...LEAD_PURPOSE_CHOICES, ...LEAD_PURPOSE_OPTIONS])
     return Array.from(set).sort()
   }, [LEAD_PURPOSE_OPTIONS])
 
   const [columnFilters, setColumnFilters] = useState({
-    name: '', email: '', job_title: '', industry: '', company: '', country: '', status: '',
+    name: '',
+    email: '',
+    job_title: '',
+    industry: '',
+    company: '',
+    country: '',
+    status: '',
   })
-  const [leadPurposeFilter, setLeadPurposeFilter] = useState('')
-  const setColFilter = (key) => (e) => setColumnFilters(prev => ({ ...prev, [key]: e.target.value }))
 
-  // leadEventMap / setLeadEventMap now come in as props from App — this is
-  // the single shared source of truth so every conversion flow (bulk here,
-  // or the quick-convert on Person detail) keeps this page in sync.
-  const leadPersonIds = useMemo(() => new Set(leadEventMap.keys()), [leadEventMap])
+  const [leadPurposeFilter, setLeadPurposeFilter] = useState('')
+
+  const setColFilter = (key) => (e) =>
+    setColumnFilters(prev => ({
+      ...prev,
+      [key]: e.target.value,
+    }))
 
   const [events, setEvents] = useState([])
   const [eventsLoading, setEventsLoading] = useState(true)
@@ -904,46 +916,118 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
 
   const wasSidebarCollapsedRef = useRef(sidebarCollapsed)
 
+  // ============================================================
+  // FETCH PEOPLE
+  // ============================================================
+
   const fetchPeople = useCallback(async () => {
-  setLoading(true)
-  setError(null)
-  const PAGE = 1000
-  let allRows = []
-  let from = 0
-  while (true) {
+    setLoading(true)
+    setError(null)
+
+    const PAGE = 1000
+    let allRows = []
+    let from = 0
+
+    while (true) {
+      const { data, error } = await supabase
+        .from('people')
+        .select('*, companies(company_name)')
+        .order('created_at', { ascending: false })
+        .order('person_id', { ascending: true })
+        .range(from, from + PAGE - 1)
+
+      if (error) {
+        setError(error.message)
+        setLoading(false)
+        return
+      }
+
+      allRows = allRows.concat(data || [])
+
+      if (!data || data.length < PAGE) break
+
+      from += PAGE
+    }
+
+    setPeople(allRows)
+    setLoading(false)
+  }, [])
+
+  // ============================================================
+  // FETCH ALL PEOPLE WHO HAVE ANY LEAD
+  //
+  // IMPORTANT:
+  // No event_id filter here.
+  //
+  // If a person exists in the leads table even once,
+  // they are considered a lead and will be hidden from People.
+  // ============================================================
+
+  const fetchLeadPersonIds = useCallback(async () => {
     const { data, error } = await supabase
-      .from('people')
-      .select('*, companies(company_name)')
-      .order('created_at', { ascending: false })
-      .order('person_id', { ascending: true })   // ← tiebreaker, makes sort order stable
-      .range(from, from + PAGE - 1)
-    if (error) { setError(error.message); setLoading(false); return }
-    allRows = allRows.concat(data || [])
-    if (!data || data.length < PAGE) break
-    from += PAGE
-  }
-  setPeople(allRows)
-  setLoading(false)
-}, [])
+      .from('leads')
+      .select('person_id')
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    const ids = new Set(
+      (data || [])
+        .map(row => row.person_id)
+        .filter(Boolean)
+    )
+
+    setLeadPersonIds(ids)
+  }, [])
+
+  // ============================================================
+  // FETCH EVENTS
+  // ============================================================
 
   const fetchEvents = useCallback(async () => {
     setEventsLoading(true)
-    const { data, error } = await supabase.from('events').select('event_id, event_name, start_date').order('start_date', { ascending: false })
-    if (!error) setEvents(data || [])
+
+    const { data, error } = await supabase
+      .from('events')
+      .select('event_id, event_name, start_date')
+      .order('start_date', { ascending: false })
+
+    if (!error) {
+      setEvents(data || [])
+    }
+
     setEventsLoading(false)
   }, [])
 
+  // ============================================================
+  // FETCH PAST EVENTS
+  // ============================================================
+
   const fetchPastEvents = useCallback(async () => {
     setPastEventsLoading(true)
+
     const { data, error } = await supabase
       .from('event_participants')
-      .select('person_id, role, status, events(event_id, event_name, start_date)')
-      .order('start_date', { ascending: false, foreignTable: 'events' })
+      .select(
+        'person_id, role, status, events(event_id, event_name, start_date)'
+      )
+      .order('start_date', {
+        ascending: false,
+        foreignTable: 'events',
+      })
+
     if (!error) {
       const map = {}
+
       ;(data || []).forEach(row => {
         if (!row.events) return
-        if (!map[row.person_id]) map[row.person_id] = []
+
+        if (!map[row.person_id]) {
+          map[row.person_id] = []
+        }
+
         map[row.person_id].push({
           event_id: row.events.event_id,
           event_name: row.events.event_name,
@@ -952,13 +1036,20 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
           status: row.status,
         })
       })
+
       setPastEventsByPerson(map)
     }
+
     setPastEventsLoading(false)
   }, [])
 
+  // ============================================================
+  // FETCH ACTIVE EVENT
+  // ============================================================
+
   const fetchActiveEventId = useCallback(async () => {
     setActiveEventLoading(true)
+
     const { data, error } = await supabase
       .from('events')
       .select('event_id')
@@ -966,100 +1057,288 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
       .order('start_date', { ascending: false })
       .limit(1)
       .maybeSingle()
-    if (!error) setActiveEventId(data?.event_id || null)
+
+    if (!error) {
+      setActiveEventId(data?.event_id || null)
+    }
+
     setActiveEventLoading(false)
   }, [])
 
+  // ============================================================
+  // INITIAL LOAD
+  // ============================================================
+
   useEffect(() => {
-    fetchPeople(); fetchEvents(); fetchPastEvents(); fetchActiveEventId()
-  }, [fetchPeople, fetchEvents, fetchPastEvents, fetchActiveEventId])
+    fetchPeople()
+    fetchLeadPersonIds()
+    fetchEvents()
+    fetchPastEvents()
+    fetchActiveEventId()
+  }, [
+    fetchPeople,
+    fetchLeadPersonIds,
+    fetchEvents,
+    fetchPastEvents,
+    fetchActiveEventId,
+  ])
+
+  // ============================================================
+  // PEOPLE FILTER
+  //
+  // THIS IS THE IMPORTANT PART:
+  //
+  // If person_id exists in leads AT ALL,
+  // don't show that person in People.
+  // ============================================================
 
   const filtered = useMemo(() => {
     const f = columnFilters
+
     const name = f.name.toLowerCase().trim()
     const email = f.email.toLowerCase().trim()
     const jt = f.job_title.toLowerCase().trim()
     const company = f.company.toLowerCase().trim()
     const country = f.country.toLowerCase().trim()
+
     return people.filter(p => {
-      if (leadPersonIds.has(p.person_id)) return false
+
+      // 🚫 ANY lead = NOT a People record anymore
+      if (leadPersonIds.has(p.person_id)) {
+        return false
+      }
+
       const companyName = p.companies?.company_name || ''
-      if (name && !`${p.first_name} ${p.last_name}`.toLowerCase().includes(name)) return false
-      if (email && !(p.email || '').toLowerCase().includes(email)) return false
-      if (jt && !(p.job_title || '').toLowerCase().includes(jt)) return false
-      if (f.industry && p.industry !== f.industry) return false
-      if (company && !companyName.toLowerCase().includes(company)) return false
-      if (country && !(p.country || '').toLowerCase().includes(country)) return false
-      if (f.status && p.status !== f.status) return false
-      if (leadPurposeFilter && p.lead_purpose !== leadPurposeFilter) return false
+
+      if (
+        name &&
+        !`${p.first_name} ${p.last_name}`
+          .toLowerCase()
+          .includes(name)
+      ) {
+        return false
+      }
+
+      if (
+        email &&
+        !(p.email || '')
+          .toLowerCase()
+          .includes(email)
+      ) {
+        return false
+      }
+
+      if (
+        jt &&
+        !(p.job_title || '')
+          .toLowerCase()
+          .includes(jt)
+      ) {
+        return false
+      }
+
+      if (
+        f.industry &&
+        p.industry !== f.industry
+      ) {
+        return false
+      }
+
+      if (
+        company &&
+        !companyName
+          .toLowerCase()
+          .includes(company)
+      ) {
+        return false
+      }
+
+      if (
+        country &&
+        !(p.country || '')
+          .toLowerCase()
+          .includes(country)
+      ) {
+        return false
+      }
+
+      if (
+        f.status &&
+        p.status !== f.status
+      ) {
+        return false
+      }
+
+      if (
+        leadPurposeFilter &&
+        p.lead_purpose !== leadPurposeFilter
+      ) {
+        return false
+      }
+
       return true
     })
-  }, [people, columnFilters, leadPurposeFilter, leadPersonIds])
+  }, [
+    people,
+    columnFilters,
+    leadPurposeFilter,
+    leadPersonIds,
+  ])
 
-  useEffect(() => { setPeoplePage(1) }, [columnFilters, leadPurposeFilter])
+  useEffect(() => {
+    setPeoplePage(1)
+  }, [columnFilters, leadPurposeFilter])
 
-  const isAlreadyLeadForEvent = (personId) => {
-    const key = linkEventId || 'NONE'
-    return leadEventMap.get(personId)?.has(key) || false
-  }
+  // ============================================================
+  // EDIT PERSON
+  // ============================================================
 
   const startEdit = (p) => {
     setEditingId(p.person_id)
+
     setEditForm({
-      first_name: p.first_name || '', last_name: p.last_name || '', email: p.email || '',
-      job_title: p.job_title || '', country: p.country || '', status: p.status || '',
+      first_name: p.first_name || '',
+      last_name: p.last_name || '',
+      email: p.email || '',
+      job_title: p.job_title || '',
+      country: p.country || '',
+      status: p.status || '',
       industry: p.industry || '',
     })
-    setEditCompany(p.companies ? { company_id: p.company_id, company_name: p.companies.company_name } : null)
+
+    setEditCompany(
+      p.companies
+        ? {
+            company_id: p.company_id,
+            company_name: p.companies.company_name,
+          }
+        : null
+    )
   }
-  const cancelEdit = () => { setEditingId(null); setEditForm(null); setEditCompany(null) }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditForm(null)
+    setEditCompany(null)
+  }
+
   const saveEdit = async (personId) => {
     setSaving(true)
+
     let companyId = editCompany?.company_id || null
-    if (!companyId && editCompany?.company_name?.trim()) {
+
+    if (
+      !companyId &&
+      editCompany?.company_name?.trim()
+    ) {
       const name = editCompany.company_name.trim()
-      const { data: existing, error: lookupError } = await supabase
+
+      const {
+        data: existing,
+        error: lookupError,
+      } = await supabase
         .from('companies')
         .select('company_id')
         .ilike('company_name', name)
         .limit(1)
         .maybeSingle()
-      if (lookupError) { setSaving(false); showToast(`Couldn't check company: ${lookupError.message}`, true); return }
+
+      if (lookupError) {
+        setSaving(false)
+        showToast(
+          `Couldn't check company: ${lookupError.message}`,
+          true
+        )
+        return
+      }
+
       if (existing) {
         companyId = existing.company_id
       } else {
-        const { data: created, error: createError } = await supabase
+        const {
+          data: created,
+          error: createError,
+        } = await supabase
           .from('companies')
-          .insert({ company_name: name })
+          .insert({
+            company_name: name,
+          })
           .select('company_id')
           .single()
-        if (createError) { setSaving(false); showToast(`Couldn't create company: ${createError.message}`, true); return }
+
+        if (createError) {
+          setSaving(false)
+          showToast(
+            `Couldn't create company: ${createError.message}`,
+            true
+          )
+          return
+        }
+
         companyId = created.company_id
       }
     }
+
     const { error } = await supabase
       .from('people')
-      .update({ ...editForm, company_id: companyId, updated_at: new Date().toISOString() })
+      .update({
+        ...editForm,
+        company_id: companyId,
+        updated_at: new Date().toISOString(),
+      })
       .eq('person_id', personId)
+
     setSaving(false)
-    if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
-    setPeople(prev => prev.map(p =>
-      p.person_id === personId
-        ? { ...p, ...editForm, company_id: companyId, companies: editCompany ? { company_name: editCompany.company_name } : null }
-        : p
-    ))
+
+    if (error) {
+      showToast(
+        `Couldn't save: ${error.message}`,
+        true
+      )
+      return
+    }
+
+    setPeople(prev =>
+      prev.map(p =>
+        p.person_id === personId
+          ? {
+              ...p,
+              ...editForm,
+              company_id: companyId,
+              companies: editCompany
+                ? {
+                    company_name:
+                      editCompany.company_name,
+                  }
+                : null,
+            }
+          : p
+      )
+    )
+
     setEditingId(null)
     setEditForm(null)
     setEditCompany(null)
+
     showToast('Person updated')
   }
 
+  // ============================================================
+  // START CONVERT
+  // ============================================================
+
   const startConvert = () => {
     if (!leadPurposeFilter) {
-      showToast('Pick a purpose from the dropdown first', true)
+      showToast(
+        'Pick a purpose from the dropdown first',
+        true
+      )
       return
     }
-    wasSidebarCollapsedRef.current = sidebarCollapsed
+
+    wasSidebarCollapsedRef.current =
+      sidebarCollapsed
+
     setSidebarCollapsed(true)
     setMode('select')
     setSelectedPersonIds(new Set())
@@ -1068,171 +1347,428 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
     setLinkEventId('')
     cancelEdit()
   }
+
   const cancelConvert = () => {
-    setSidebarCollapsed(wasSidebarCollapsedRef.current)
+    setSidebarCollapsed(
+      wasSidebarCollapsedRef.current
+    )
+
     setMode('browse')
     setSelectedPersonIds(new Set())
     setChannelExceptions(new Map())
   }
+
+  // ============================================================
+  // SELECTION
+  // ============================================================
+
   const togglePerson = (personId) => {
-    if (isAlreadyLeadForEvent(personId)) return
+    // This should normally never happen because filtered already
+    // removes every person who has a lead.
+    if (leadPersonIds.has(personId)) return
+
     setSelectedPersonIds(prev => {
       const next = new Set(prev)
-      if (next.has(personId)) next.delete(personId)
-      else next.add(personId)
+
+      if (next.has(personId)) {
+        next.delete(personId)
+      } else {
+        next.add(personId)
+      }
+
       return next
     })
   }
+
   const removeFromSelection = (personId) => {
     togglePerson(personId)
+
     setChannelExceptions(prev => {
-      if (!prev.has(personId)) return prev
+      if (!prev.has(personId)) {
+        return prev
+      }
+
       const next = new Map(prev)
       next.delete(personId)
+
       return next
     })
   }
-  const selectAllFiltered = () => setSelectedPersonIds(new Set(filtered.filter(p => !isAlreadyLeadForEvent(p.person_id)).map(p => p.person_id)))
+
+  const selectAllFiltered = () => {
+    setSelectedPersonIds(
+      new Set(
+        filtered.map(p => p.person_id)
+      )
+    )
+  }
 
   const selectAllOnPage = () => {
-    const pageIds = paginate(filtered, peoplePage)
-      .filter(p => !isAlreadyLeadForEvent(p.person_id))
-      .map(p => p.person_id)
-    setSelectedPersonIds(prev => new Set([...prev, ...pageIds]))
+    const pageIds = paginate(
+      filtered,
+      peoplePage
+    ).map(p => p.person_id)
+
+    setSelectedPersonIds(
+      prev => new Set([
+        ...prev,
+        ...pageIds,
+      ])
+    )
   }
 
-  const clearSelection = () => { setSelectedPersonIds(new Set()); setChannelExceptions(new Map()) }
+  const clearSelection = () => {
+    setSelectedPersonIds(new Set())
+    setChannelExceptions(new Map())
+  }
 
   const handleLinkEventChange = (e) => {
-    const newEventId = e.target.value
-    const key = newEventId || 'NONE'
-    setSelectedPersonIds(prev => {
-      const next = new Set(prev)
-      prev.forEach(id => { if (leadEventMap.get(id)?.has(key)) next.delete(id) })
-      return next
-    })
-    setLinkEventId(newEventId)
+    setLinkEventId(e.target.value)
   }
+
+  // ============================================================
+  // CHANNELS
+  // ============================================================
 
   const toggleChannelDefault = (key) => {
-    const cf = CHANNEL_FIELDS.find(c => c.key === key)
+    const cf = CHANNEL_FIELDS.find(
+      c => c.key === key
+    )
+
     if (!cf?.live) return
-    setChannelDefaults(prev => ({ ...prev, [key]: !prev[key] }))
+
+    setChannelDefaults(prev => ({
+      ...prev,
+      [key]: !prev[key],
+    }))
   }
 
-  const toggleChannelException = (personId, key) => {
-    const cf = CHANNEL_FIELDS.find(c => c.key === key)
+  const toggleChannelException = (
+    personId,
+    key
+  ) => {
+    const cf = CHANNEL_FIELDS.find(
+      c => c.key === key
+    )
+
     if (!cf?.live) return
+
     setChannelExceptions(prev => {
       const next = new Map(prev)
-      const set = new Set(next.get(personId) || [])
-      if (set.has(key)) set.delete(key)
-      else set.add(key)
+
+      const set = new Set(
+        next.get(personId) || []
+      )
+
+      if (set.has(key)) {
+        set.delete(key)
+      } else {
+        set.add(key)
+      }
+
       next.set(personId, set)
+
       return next
     })
   }
-  const effectiveChannelValue = (personId, key) => {
-    const isException = channelExceptions.get(personId)?.has(key)
-    return isException ? !channelDefaults[key] : channelDefaults[key]
+
+  const effectiveChannelValue = (
+    personId,
+    key
+  ) => {
+    const isException =
+      channelExceptions
+        .get(personId)
+        ?.has(key)
+
+    return isException
+      ? !channelDefaults[key]
+      : channelDefaults[key]
   }
+
+  // ============================================================
+  // CONVERT TO LEAD
+  // ============================================================
 
   const submitConvert = async () => {
     setConverting(true)
-    const selectedPeople = people.filter(p => selectedPersonIds.has(p.person_id))
+
+    const selectedPeople =
+      people.filter(p =>
+        selectedPersonIds.has(
+          p.person_id
+        )
+      )
+
     const rows = selectedPeople.map(p => ({
       person_id: p.person_id,
       company_id: p.company_id || null,
+
+      // IMPORTANT:
+      // Event is optional and dynamic.
+      // NO hardcoded BANCEE26.
       event_id: linkEventId || null,
+
       lead_status: 'New',
       nurture_stage: 'Outreach',
       lead_purpose: leadPurposeFilter,
-      ...buildChannelRowFields(effectiveChannelValue, p.person_id),
+
+      ...buildChannelRowFields(
+        effectiveChannelValue,
+        p.person_id
+      ),
     }))
-    const { data: inserted, error } = await supabase.from('leads').insert(rows).select('lead_id, person_id')
+
+    const {
+      data: inserted,
+      error,
+    } = await supabase
+      .from('leads')
+      .insert(rows)
+      .select('lead_id, person_id')
+
     setConverting(false)
-    if (error) { showToast(`Couldn't create leads: ${error.message}`, true); return }
-    setLeadEventMap(prev => {
-      const next = new Map(prev)
-      const key = linkEventId || 'NONE'
-      rows.forEach(r => {
-        const set = new Set(next.get(r.person_id) || [])
-        set.add(key)
-        next.set(r.person_id, set)
+
+    if (error) {
+      showToast(
+        `Couldn't create leads: ${error.message}`,
+        true
+      )
+      return
+    }
+
+    // ==========================================================
+    // IMPORTANT:
+    // Immediately mark these people as leads.
+    //
+    // This makes them disappear from People without
+    // requiring a page refresh.
+    // ==========================================================
+
+    setLeadPersonIds(prev => {
+      const next = new Set(prev)
+
+      rows.forEach(row => {
+        next.add(row.person_id)
       })
+
       return next
     })
-    const newLeadIds = (inserted || []).map(r => r.lead_id)
+
+    const newLeadIds =
+      (inserted || []).map(
+        r => r.lead_id
+      )
+
     const count = rows.length
+
     showToast(
-      `${count} ${count === 1 ? 'lead' : 'leads'} created`,
+      `${count} ${
+        count === 1
+          ? 'lead'
+          : 'leads'
+      } created`,
       false,
       newLeadIds.length > 0
         ? async () => {
-            const { error: undoError } = await supabase.from('leads').delete().in('lead_id', newLeadIds)
-            if (undoError) { showToast(`Couldn't undo: ${undoError.message}`, true); return }
-            setLeadEventMap(prev => {
-              const next = new Map(prev)
-              const key = linkEventId || 'NONE'
-              rows.forEach(r => {
-                const set = new Set(next.get(r.person_id) || [])
-                set.delete(key)
-                if (set.size === 0) next.delete(r.person_id)
-                else next.set(r.person_id, set)
+
+            const {
+              error: undoError,
+            } = await supabase
+              .from('leads')
+              .delete()
+              .in(
+                'lead_id',
+                newLeadIds
+              )
+
+            if (undoError) {
+              showToast(
+                `Couldn't undo: ${undoError.message}`,
+                true
+              )
+              return
+            }
+
+            // Put them back into People
+            // because their lead was removed.
+            setLeadPersonIds(prev => {
+              const next = new Set(prev)
+
+              rows.forEach(row => {
+                next.delete(
+                  row.person_id
+                )
               })
+
               return next
             })
-            showToast(`Undone — ${count} ${count === 1 ? 'lead' : 'leads'} removed`)
+
+            showToast(
+              `Undone — ${count} ${
+                count === 1
+                  ? 'lead'
+                  : 'leads'
+              } removed`
+            )
           }
         : null
     )
-    setSidebarCollapsed(wasSidebarCollapsedRef.current)
+
+    setSidebarCollapsed(
+      wasSidebarCollapsedRef.current
+    )
+
     setMode('browse')
     setSelectedPersonIds(new Set())
     setChannelExceptions(new Map())
   }
 
   const selecting = mode === 'select'
-  const COLUMN_COUNT = selecting ? 11 : 10
+
+  const COLUMN_COUNT =
+    selecting ? 11 : 10
+
+  // ============================================================
+  // TABLE
+  // ============================================================
 
   const table = (
     <div>
       <div className="crm-toolbar">
+
         {selecting ? (
           <>
-            <select className="crm-filter-select" value={linkEventId} onChange={handleLinkEventChange} disabled={eventsLoading}>
-              <option value="">No event (general lead)</option>
-              {events.map(e => <option key={e.event_id} value={e.event_id}>{e.event_name} ({formatDate(e.start_date)})</option>)}
+            <select
+              className="crm-filter-select"
+              value={linkEventId}
+              onChange={handleLinkEventChange}
+              disabled={eventsLoading}
+            >
+              <option value="">
+                No event (general lead)
+              </option>
+
+              {events.map(e => (
+                <option
+                  key={e.event_id}
+                  value={e.event_id}
+                >
+                  {e.event_name} (
+                  {formatDate(e.start_date)}
+                  )
+                </option>
+              ))}
             </select>
-            <button className="crm-toggle-chip" onClick={selectAllOnPage}>Select all on this page</button>
-            <button className="crm-toggle-chip" onClick={selectAllFiltered}>Select all filtered ({filtered.filter(p => !isAlreadyLeadForEvent(p.person_id)).length})</button>
-            {selectedPersonIds.size > 0 && <button className="crm-toggle-chip" onClick={clearSelection}>Clear selection</button>}
-            <button className="crm-btn-secondary" onClick={cancelConvert}>Cancel</button>
+
+            <button
+              className="crm-toggle-chip"
+              onClick={selectAllOnPage}
+            >
+              Select all on this page
+            </button>
+
+            <button
+              className="crm-toggle-chip"
+              onClick={selectAllFiltered}
+            >
+              Select all filtered (
+              {filtered.length}
+              )
+            </button>
+
+            {selectedPersonIds.size > 0 && (
+              <button
+                className="crm-toggle-chip"
+                onClick={clearSelection}
+              >
+                Clear selection
+              </button>
+            )}
+
+            <button
+              className="crm-btn-secondary"
+              onClick={cancelConvert}
+            >
+              Cancel
+            </button>
           </>
         ) : (
           <>
-            <select className="crm-filter-select" value={leadPurposeFilter} onChange={(e) => setLeadPurposeFilter(e.target.value)}>
-              <option value="">Select purpose…</option>
-              {COMBINED_PURPOSE_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+            <select
+              className="crm-filter-select"
+              value={leadPurposeFilter}
+              onChange={e =>
+                setLeadPurposeFilter(
+                  e.target.value
+                )
+              }
+            >
+              <option value="">
+                Select purpose…
+              </option>
+
+              {COMBINED_PURPOSE_OPTIONS.map(
+                p => (
+                  <option
+                    key={p}
+                    value={p}
+                  >
+                    {p}
+                  </option>
+                )
+              )}
             </select>
-            <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 18px' }} onClick={startConvert}>
-              <UserPlus size={15} /> Convert to lead
+
+            <button
+              className="crm-submit-btn"
+              style={{
+                width: 'auto',
+                padding: '10px 18px',
+              }}
+              onClick={startConvert}
+            >
+              <UserPlus size={15} />
+              Convert to lead
             </button>
           </>
         )}
-        <span className="crm-count-note">{filtered.length} of {people.length}</span>
+
+        <span className="crm-count-note">
+          {filtered.length} of {people.length}
+        </span>
       </div>
 
-      {loading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading people…</div>}
-      {error && <div className="crm-error">Couldn't load people: {error}</div>}
+      {loading && (
+        <div className="crm-loading">
+          <Loader2
+            size={16}
+            className="crm-spin"
+          />
+          Loading people…
+        </div>
+      )}
+
+      {error && (
+        <div className="crm-error">
+          Couldn't load people: {error}
+        </div>
+      )}
 
       {!loading && !error && (
         <div className="crm-table-wrap">
           <table className="crm-table">
+
             <thead>
               <tr>
-                {selecting && <th style={{ width: 36 }}></th>}
-                {selecting && <th style={{ width: 76 }}></th>}
+                {selecting && (
+                  <th style={{ width: 36 }} />
+                )}
+
+                {selecting && (
+                  <th style={{ width: 76 }} />
+                )}
+
                 <th>Name</th>
                 <th>Email</th>
                 <th>Job title</th>
@@ -1242,86 +1778,366 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 <th>LinkedIn</th>
                 <th>Status</th>
                 <th>Past Events</th>
-                {!selecting && <th></th>}
+
+                {!selecting && <th />}
               </tr>
+
               <tr>
-                {selecting && <th></th>}
-                {selecting && <th></th>}
-                <th><input className="crm-cell-input" value={columnFilters.name} onChange={setColFilter('name')} placeholder="Filter…" /></th>
-                <th><input className="crm-cell-input" value={columnFilters.email} onChange={setColFilter('email')} placeholder="Filter…" /></th>
-                <th><input className="crm-cell-input" value={columnFilters.job_title} onChange={setColFilter('job_title')} placeholder="Filter…" /></th>
+                {selecting && <th />}
+                {selecting && <th />}
+
                 <th>
-                  <select className="crm-cell-select" value={columnFilters.industry} onChange={setColFilter('industry')}>
-                    <option value="">All</option>
-                    {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
+                  <input
+                    className="crm-cell-input"
+                    value={columnFilters.name}
+                    onChange={setColFilter('name')}
+                    placeholder="Filter…"
+                  />
+                </th>
+
+                <th>
+                  <input
+                    className="crm-cell-input"
+                    value={columnFilters.email}
+                    onChange={setColFilter('email')}
+                    placeholder="Filter…"
+                  />
+                </th>
+
+                <th>
+                  <input
+                    className="crm-cell-input"
+                    value={columnFilters.job_title}
+                    onChange={setColFilter('job_title')}
+                    placeholder="Filter…"
+                  />
+                </th>
+
+                <th>
+                  <select
+                    className="crm-cell-select"
+                    value={columnFilters.industry}
+                    onChange={setColFilter('industry')}
+                  >
+                    <option value="">
+                      All
+                    </option>
+
+                    {INDUSTRY_OPTIONS.map(i => (
+                      <option
+                        key={i}
+                        value={i}
+                      >
+                        {i}
+                      </option>
+                    ))}
                   </select>
                 </th>
-                <th><input className="crm-cell-input" value={columnFilters.company} onChange={setColFilter('company')} placeholder="Filter…" /></th>
-                <th><input className="crm-cell-input" value={columnFilters.country} onChange={setColFilter('country')} placeholder="Filter…" /></th>
-                <th></th>
+
                 <th>
-                  <select className="crm-cell-select" value={columnFilters.status} onChange={setColFilter('status')}>
-                    <option value="">All</option>
-                    {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  <input
+                    className="crm-cell-input"
+                    value={columnFilters.company}
+                    onChange={setColFilter('company')}
+                    placeholder="Filter…"
+                  />
+                </th>
+
+                <th>
+                  <input
+                    className="crm-cell-input"
+                    value={columnFilters.country}
+                    onChange={setColFilter('country')}
+                    placeholder="Filter…"
+                  />
+                </th>
+
+                <th />
+
+                <th>
+                  <select
+                    className="crm-cell-select"
+                    value={columnFilters.status}
+                    onChange={setColFilter('status')}
+                  >
+                    <option value="">
+                      All
+                    </option>
+
+                    {STATUS_OPTIONS.map(s => (
+                      <option
+                        key={s}
+                        value={s}
+                      >
+                        {s}
+                      </option>
+                    ))}
                   </select>
                 </th>
-                <th></th>
-                {!selecting && <th></th>}
+
+                <th />
+
+                {!selecting && <th />}
               </tr>
             </thead>
+
             <tbody>
-              {paginate(filtered, peoplePage).map(p => {
-                const av = avatarStyle(p.first_name + p.last_name)
-                const alreadyLead = leadPersonIds.has(p.person_id)
-                const isEditing = editingId === p.person_id
-                const disabledForEvent = selecting && isAlreadyLeadForEvent(p.person_id)
-                const history = pastEventsByPerson[p.person_id] || []
+              {paginate(
+                filtered,
+                peoplePage
+              ).map(p => {
+
+                const av = avatarStyle(
+                  p.first_name +
+                    p.last_name
+                )
+
+                // This should normally always be false
+                // because filtered already excludes leads.
+                const alreadyLead =
+                  leadPersonIds.has(
+                    p.person_id
+                  )
+
+                const isEditing =
+                  editingId ===
+                  p.person_id
+
+                const history =
+                  pastEventsByPerson[
+                    p.person_id
+                  ] || []
 
                 const pastEventsCell = (
                   <td>
                     {pastEventsLoading ? (
-                      <span className="crm-muted">…</span>
+                      <span className="crm-muted">
+                        …
+                      </span>
                     ) : history.length === 0 ? (
-                      <span className="crm-muted">—</span>
+                      <span className="crm-muted">
+                        —
+                      </span>
                     ) : (
-                      history.map(h => h.event_id).join(', ')
+                      history
+                        .map(h => h.event_id)
+                        .join(', ')
                     )}
                   </td>
                 )
 
                 if (isEditing) {
                   return (
-                    <tr key={p.person_id} className="editing">
-                      {selecting && <td></td>}
-                      {selecting && <td></td>}
+                    <tr
+                      key={p.person_id}
+                      className="editing"
+                    >
+                      {selecting && <td />}
+                      {selecting && <td />}
+
                       <td>
-                        <input className="crm-cell-input" value={editForm.first_name} onChange={e => setEditForm({ ...editForm, first_name: e.target.value })} placeholder="First name" />
-                        <input className="crm-cell-input" value={editForm.last_name} onChange={e => setEditForm({ ...editForm, last_name: e.target.value })} placeholder="Last name" />
+                        <input
+                          className="crm-cell-input"
+                          value={
+                            editForm.first_name
+                          }
+                          onChange={e =>
+                            setEditForm({
+                              ...editForm,
+                              first_name:
+                                e.target.value,
+                            })
+                          }
+                          placeholder="First name"
+                        />
+
+                        <input
+                          className="crm-cell-input"
+                          value={
+                            editForm.last_name
+                          }
+                          onChange={e =>
+                            setEditForm({
+                              ...editForm,
+                              last_name:
+                                e.target.value,
+                            })
+                          }
+                          placeholder="Last name"
+                        />
                       </td>
-                      <td><input className="crm-cell-input" value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} /></td>
-                      <td><input className="crm-cell-input" value={editForm.job_title} onChange={e => setEditForm({ ...editForm, job_title: e.target.value })} /></td>
+
                       <td>
-                        <select className="crm-cell-select" value={editForm.industry} onChange={e => setEditForm({ ...editForm, industry: e.target.value })}>
-                          <option value="">—</option>
-                          {INDUSTRY_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
+                        <input
+                          className="crm-cell-input"
+                          value={
+                            editForm.email
+                          }
+                          onChange={e =>
+                            setEditForm({
+                              ...editForm,
+                              email:
+                                e.target.value,
+                            })
+                          }
+                        />
+                      </td>
+
+                      <td>
+                        <input
+                          className="crm-cell-input"
+                          value={
+                            editForm.job_title
+                          }
+                          onChange={e =>
+                            setEditForm({
+                              ...editForm,
+                              job_title:
+                                e.target.value,
+                            })
+                          }
+                        />
+                      </td>
+
+                      <td>
+                        <select
+                          className="crm-cell-select"
+                          value={
+                            editForm.industry
+                          }
+                          onChange={e =>
+                            setEditForm({
+                              ...editForm,
+                              industry:
+                                e.target.value,
+                            })
+                          }
+                        >
+                          <option value="">
+                            —
+                          </option>
+
+                          {INDUSTRY_OPTIONS.map(
+                            i => (
+                              <option
+                                key={i}
+                                value={i}
+                              >
+                                {i}
+                              </option>
+                            )
+                          )}
                         </select>
                       </td>
-                      <td><CompanyPicker value={editCompany} onChange={setEditCompany} /></td>
-                      <td><input className="crm-cell-input" value={editForm.country} onChange={e => setEditForm({ ...editForm, country: e.target.value })} /></td>
-                      <td>{p.linkedin_url ? <a href={externalUrl(p.linkedin_url)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
+
                       <td>
-                        <select className="crm-cell-select" value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })}>
-                          <option value="">—</option>
-                          {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        <CompanyPicker
+                          value={editCompany}
+                          onChange={
+                            setEditCompany
+                          }
+                        />
+                      </td>
+
+                      <td>
+                        <input
+                          className="crm-cell-input"
+                          value={
+                            editForm.country
+                          }
+                          onChange={e =>
+                            setEditForm({
+                              ...editForm,
+                              country:
+                                e.target.value,
+                            })
+                          }
+                        />
+                      </td>
+
+                      <td>
+                        {p.linkedin_url ? (
+                          <a
+                            href={externalUrl(
+                              p.linkedin_url
+                            )}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={e =>
+                              e.stopPropagation()
+                            }
+                          >
+                            View ↗
+                          </a>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+
+                      <td>
+                        <select
+                          className="crm-cell-select"
+                          value={
+                            editForm.status
+                          }
+                          onChange={e =>
+                            setEditForm({
+                              ...editForm,
+                              status:
+                                e.target.value,
+                            })
+                          }
+                        >
+                          <option value="">
+                            —
+                          </option>
+
+                          {STATUS_OPTIONS.map(
+                            s => (
+                              <option
+                                key={s}
+                                value={s}
+                              >
+                                {s}
+                              </option>
+                            )
+                          )}
                         </select>
                       </td>
+
                       {pastEventsCell}
+
                       <td>
                         <div className="crm-row-actions">
-                          <button className="crm-icon-action save" onClick={() => saveEdit(p.person_id)} disabled={saving} aria-label="Save">
-                            {saving ? <Loader2 size={14} className="crm-spin" /> : <Save size={14} />}
+                          <button
+                            className="crm-icon-action save"
+                            onClick={() =>
+                              saveEdit(
+                                p.person_id
+                              )
+                            }
+                            disabled={saving}
+                            aria-label="Save"
+                          >
+                            {saving ? (
+                              <Loader2
+                                size={14}
+                                className="crm-spin"
+                              />
+                            ) : (
+                              <Save size={14} />
+                            )}
                           </button>
-                          <button className="crm-icon-action cancel" onClick={cancelEdit} aria-label="Cancel"><XCircle size={14} /></button>
+
+                          <button
+                            className="crm-icon-action cancel"
+                            onClick={
+                              cancelEdit
+                            }
+                            aria-label="Cancel"
+                          >
+                            <XCircle size={14} />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1331,64 +2147,149 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                 return (
                   <tr
                     key={p.person_id}
-                    className={`clickable${disabledForEvent ? ' disabled' : ''}`}
+                    className="clickable"
                     onClick={() => {
-                      if (selecting) { if (!disabledForEvent) togglePerson(p.person_id) }
-                      else onOpenPerson(p.person_id)
+                      if (selecting) {
+                        togglePerson(
+                          p.person_id
+                        )
+                      } else {
+                        onOpenPerson(
+                          p.person_id
+                        )
+                      }
                     }}
-                    title={disabledForEvent ? 'Already a lead for this event' : undefined}
                   >
                     {selecting && (
                       <td>
                         <input
                           type="checkbox"
-                          checked={selectedPersonIds.has(p.person_id)}
-                          disabled={disabledForEvent}
-                          onChange={() => togglePerson(p.person_id)}
-                          onClick={e => e.stopPropagation()}
+                          checked={selectedPersonIds.has(
+                            p.person_id
+                          )}
+                          onChange={() =>
+                            togglePerson(
+                              p.person_id
+                            )
+                          }
+                          onClick={e =>
+                            e.stopPropagation()
+                          }
                         />
                       </td>
                     )}
+
                     {selecting && (
                       <td>
                         <div className="crm-row-actions">
+
                           <button
                             className="crm-icon-action"
-                            onClick={(e) => { e.stopPropagation(); onOpenPerson(p.person_id) }}
+                            onClick={e => {
+                              e.stopPropagation()
+                              onOpenPerson(
+                                p.person_id
+                              )
+                            }}
                             aria-label="View details"
                             title="View details"
                           >
                             <Eye size={14} />
                           </button>
+
                           <button
                             className="crm-icon-action"
-                            onClick={(e) => { e.stopPropagation(); startEdit(p) }}
+                            onClick={e => {
+                              e.stopPropagation()
+                              startEdit(p)
+                            }}
                             aria-label="Edit person"
                             title="Edit"
                           >
                             <Pencil size={14} />
                           </button>
+
                         </div>
                       </td>
                     )}
+
                     <td>
                       <div className="crm-name-cell">
-                        <div className="crm-avatar" style={{ background: av.bg, color: av.fg }}>{initials(p.first_name, p.last_name)}</div>
-                        <span>{p.first_name} {p.last_name}</span>
-                        {alreadyLead && <span className="crm-lead-tag">Lead</span>}
+                        <div
+                          className="crm-avatar"
+                          style={{
+                            background:
+                              av.bg,
+                            color:
+                              av.fg,
+                          }}
+                        >
+                          {initials(
+                            p.first_name,
+                            p.last_name
+                          )}
+                        </div>
+
+                        <span>
+                          {p.first_name}{' '}
+                          {p.last_name}
+                        </span>
+
+                        {alreadyLead && (
+                          <span className="crm-lead-tag">
+                            Lead
+                          </span>
+                        )}
                       </div>
                     </td>
+
                     <td>{p.email}</td>
                     <td>{p.job_title || '—'}</td>
                     <td>{p.industry || '—'}</td>
-                    <td>{p.companies?.company_name || '—'}</td>
+                    <td>
+                      {p.companies?.company_name ||
+                        '—'}
+                    </td>
                     <td>{p.country || '—'}</td>
-                    <td>{p.linkedin_url ? <a href={externalUrl(p.linkedin_url)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>View ↗</a> : '—'}</td>
-                    <td><Badge value={p.status} /></td>
+
+                    <td>
+                      {p.linkedin_url ? (
+                        <a
+                          href={externalUrl(
+                            p.linkedin_url
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={e =>
+                            e.stopPropagation()
+                          }
+                        >
+                          View ↗
+                        </a>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+
+                    <td>
+                      <Badge
+                        value={p.status}
+                      />
+                    </td>
+
                     {pastEventsCell}
+
                     {!selecting && (
                       <td>
-                        <button className="crm-icon-action" onClick={(e) => { e.stopPropagation(); startEdit(p) }} aria-label="Edit person" title="Edit">
+                        <button
+                          className="crm-icon-action"
+                          onClick={e => {
+                            e.stopPropagation()
+                            startEdit(p)
+                          }}
+                          aria-label="Edit person"
+                          title="Edit"
+                        >
                           <Pencil size={14} />
                         </button>
                       </td>
@@ -1396,98 +2297,295 @@ function PeoplePage({ showToast, onOpenPerson, sidebarCollapsed, setSidebarColla
                   </tr>
                 )
               })}
+
               {filtered.length === 0 && (
-                <tr className="crm-empty-row"><td colSpan={COLUMN_COUNT}>No one matches that search.</td></tr>
+                <tr className="crm-empty-row">
+                  <td colSpan={COLUMN_COUNT}>
+                    No one matches that search.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
-          <Pagination page={peoplePage} setPage={setPeoplePage} total={filtered.length} />
+
+          <Pagination
+            page={peoplePage}
+            setPage={setPeoplePage}
+            total={filtered.length}
+          />
         </div>
       )}
     </div>
   )
 
-  if (!selecting || selectedPersonIds.size === 0) return table
+  // ============================================================
+  // NO SELECTION
+  // ============================================================
+
+  if (
+    !selecting ||
+    selectedPersonIds.size === 0
+  ) {
+    return table
+  }
+
+  // ============================================================
+  // SELECTED PEOPLE
+  // ============================================================
 
   const selectedItems = people
-    .filter(p => selectedPersonIds.has(p.person_id))
+    .filter(p =>
+      selectedPersonIds.has(
+        p.person_id
+      )
+    )
     .map(p => {
-      const activeWarnings = CHANNEL_FIELDS
-        .filter(cf => cf.live && effectiveChannelValue(p.person_id, cf.key))
-        .map(cf => channelReadinessWarning(p, cf.key))
-        .filter(Boolean)
-      const companyName = p.companies?.company_name || ''
+
+      const activeWarnings =
+        CHANNEL_FIELDS
+          .filter(
+            cf =>
+              cf.live &&
+              effectiveChannelValue(
+                p.person_id,
+                cf.key
+              )
+          )
+          .map(cf =>
+            channelReadinessWarning(
+              p,
+              cf.key
+            )
+          )
+          .filter(Boolean)
+
+      const companyName =
+        p.companies?.company_name ||
+        ''
+
       return {
         id: p.person_id,
         primary: `${p.first_name} ${p.last_name}`,
-        secondary: `${p.email}${p.industry ? ' · ' + p.industry : ''}${companyName ? ' · ' + companyName : ''}`,
-        warning: activeWarnings.length > 0 ? activeWarnings.join(' ') : null,
+        secondary:
+          `${p.email}` +
+          `${p.industry ? ' · ' + p.industry : ''}` +
+          `${companyName ? ' · ' + companyName : ''}`,
+        warning:
+          activeWarnings.length > 0
+            ? activeWarnings.join(' ')
+            : null,
       }
     })
 
   return (
     <div className="crm-split-layout">
-      <div className="crm-split-main">{table}</div>
+
+      <div className="crm-split-main">
+        {table}
+      </div>
 
       <div className="crm-split-side">
         <div className="crm-side-panel">
-          <h4 className="crm-confirm-heading">{selectedPersonIds.size} selected</h4>
+
+          <h4 className="crm-confirm-heading">
+            {selectedPersonIds.size}{' '}
+            selected
+          </h4>
+
           <p className="crm-confirm-note">
-            Every live channel starts on for everyone. Click a chip below to turn a channel off for the whole batch, or click a person's chip to except just them.
+            Every live channel starts on
+            for everyone. Click a chip
+            below to turn a channel off
+            for the whole batch, or click
+            a person's chip to except just
+            them.
           </p>
 
-          <div className="crm-channel-toggles" style={{ marginBottom: 16 }}>
+          <div
+            className="crm-channel-toggles"
+            style={{
+              marginBottom: 16,
+            }}
+          >
             {CHANNEL_FIELDS.map(cf => (
               <button
                 key={cf.key}
                 type="button"
                 disabled={!cf.live}
-                className={`crm-channel-toggle${channelDefaults[cf.key] ? '' : ' off'}${!cf.live ? ' disabled-live' : ''}`}
-                onClick={() => toggleChannelDefault(cf.key)}
-                title={!cf.live ? 'Not wired to an active automation yet' : undefined}
+                className={`crm-channel-toggle${
+                  channelDefaults[
+                    cf.key
+                  ]
+                    ? ''
+                    : ' off'
+                }${
+                  !cf.live
+                    ? ' disabled-live'
+                    : ''
+                }`}
+                onClick={() =>
+                  toggleChannelDefault(
+                    cf.key
+                  )
+                }
+                title={
+                  !cf.live
+                    ? 'Not wired to an active automation yet'
+                    : undefined
+                }
               >
-                {channelDefaults[cf.key] ? <Check size={11} /> : <X size={11} />} {cf.label}{!cf.live ? ' (inactive)' : ''}
+                {channelDefaults[
+                  cf.key
+                ] ? (
+                  <Check size={11} />
+                ) : (
+                  <X size={11} />
+                )}{' '}
+                {cf.label}
+                {!cf.live
+                  ? ' (inactive)'
+                  : ''}
               </button>
             ))}
           </div>
 
           <div className="crm-confirm-list">
+
             {selectedItems.map(item => (
-              <div key={item.id} className="crm-confirm-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div
+                key={item.id}
+                className="crm-confirm-row"
+                style={{
+                  flexDirection:
+                    'column',
+                  alignItems:
+                    'stretch',
+                  gap: 8,
+                }}
+              >
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems:
+                      'center',
+                    justifyContent:
+                      'space-between',
+                  }}
+                >
                   <div>
-                    <div className="crm-confirm-row-name">{item.primary}</div>
-                    <div className="crm-confirm-row-sub">{item.secondary}</div>
+                    <div className="crm-confirm-row-name">
+                      {item.primary}
+                    </div>
+
+                    <div className="crm-confirm-row-sub">
+                      {item.secondary}
+                    </div>
                   </div>
-                  <button className="crm-remove-x" onClick={() => removeFromSelection(item.id)} aria-label={`Remove ${item.primary}`}>
+
+                  <button
+                    className="crm-remove-x"
+                    onClick={() =>
+                      removeFromSelection(
+                        item.id
+                      )
+                    }
+                    aria-label={`Remove ${item.primary}`}
+                  >
                     <X size={14} />
                   </button>
                 </div>
+
                 <div className="crm-channel-toggles">
-                  {CHANNEL_FIELDS.map(cf => {
-                    const on = effectiveChannelValue(item.id, cf.key)
-                    return (
-                      <button
-                        key={cf.key}
-                        type="button"
-                        disabled={!cf.live}
-                        className={`crm-channel-toggle${on ? '' : ' off'}${!cf.live ? ' disabled-live' : ''}`}
-                        onClick={() => toggleChannelException(item.id, cf.key)}
-                        title={!cf.live ? 'Not wired to an active automation yet' : undefined}
-                      >
-                        {on ? <Check size={10} /> : <X size={10} />} {cf.label}
-                      </button>
-                    )
-                  })}
+
+                  {CHANNEL_FIELDS.map(
+                    cf => {
+
+                      const on =
+                        effectiveChannelValue(
+                          item.id,
+                          cf.key
+                        )
+
+                      return (
+                        <button
+                          key={cf.key}
+                          type="button"
+                          disabled={
+                            !cf.live
+                          }
+                          className={`crm-channel-toggle${
+                            on
+                              ? ''
+                              : ' off'
+                          }${
+                            !cf.live
+                              ? ' disabled-live'
+                              : ''
+                          }`}
+                          onClick={() =>
+                            toggleChannelException(
+                              item.id,
+                              cf.key
+                            )
+                          }
+                          title={
+                            !cf.live
+                              ? 'Not wired to an active automation yet'
+                              : undefined
+                          }
+                        >
+                          {on ? (
+                            <Check
+                              size={10}
+                            />
+                          ) : (
+                            <X size={10} />
+                          )}{' '}
+                          {cf.label}
+                        </button>
+                      )
+                    }
+                  )}
+
                 </div>
-                {item.warning && <div className="crm-warn-note"><AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />{item.warning}</div>}
+
+                {item.warning && (
+                  <div className="crm-warn-note">
+                    <AlertTriangle
+                      size={12}
+                      style={{
+                        flexShrink: 0,
+                        marginTop: 1,
+                      }}
+                    />
+                    {item.warning}
+                  </div>
+                )}
+
               </div>
             ))}
+
           </div>
 
-          <button className="crm-submit-btn" onClick={submitConvert} disabled={converting}>
-            {converting ? <Loader2 size={15} className="crm-spin" /> : <Check size={15} />} Confirm & create {selectedPersonIds.size}
+          <button
+            className="crm-submit-btn"
+            onClick={submitConvert}
+            disabled={converting}
+          >
+            {converting ? (
+              <Loader2
+                size={15}
+                className="crm-spin"
+              />
+            ) : (
+              <Check size={15} />
+            )}
+
+            Confirm & create{' '}
+            {selectedPersonIds.size}
           </button>
+
         </div>
       </div>
     </div>
