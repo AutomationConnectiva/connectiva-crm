@@ -2732,11 +2732,7 @@ function LeadsPage({ showToast, onOpenLead }) {
 
   useEffect(() => { setLeadsPage(1) }, [search, statusFilter, activeOnly, selectedEventId])
 
-  const selectedEventLabel = useMemo(() => {
-    if (selectedEventId === 'NONE') return 'General leads (no event)'
-    const ev = pickerEvents.find(e => e.event_id === selectedEventId)
-    return ev ? ev.event_name : selectedEventId
-  }, [selectedEventId, pickerEvents])
+  
 
   // -------------------------------------------------------------------------
   // Step 1: event picker — shown until an event (or "no event") is chosen.
@@ -2755,10 +2751,7 @@ function LeadsPage({ showToast, onOpenLead }) {
               style={{ cursor: 'pointer' }}
               onClick={() => setSelectedEventId('NONE')}
             >
-              <div>
-                <div className="crm-confirm-row-name">General leads (no event)</div>
-                <div className="crm-confirm-row-sub">Leads not tied to a specific event</div>
-              </div>
+          
             </div>
             {pickerEvents.map(e => (
               <div
