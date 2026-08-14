@@ -2688,6 +2688,14 @@ function LeadsPage({ showToast, onOpenLead }) {
 
   useEffect(() => { fetchPickerEvents() }, [fetchPickerEvents])
 
+  // Human-readable label for whichever event is currently selected, used in
+  // the "Viewing: ..." toolbar line below. 'NONE' means general leads with
+  // no event_id — everything else is looked up by id from pickerEvents.
+  const selectedEventLabel = useMemo(() => {
+    if (selectedEventId === 'NONE') return 'No event (general leads)'
+    return pickerEvents.find(e => e.event_id === selectedEventId)?.event_name || selectedEventId
+  }, [selectedEventId, pickerEvents])
+
   const [leads, setLeads] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -2741,30 +2749,30 @@ function LeadsPage({ showToast, onOpenLead }) {
   // general leads with no event_id. Single request with an explicit high
   // .range() ceiling (not a page loop) so PostgREST's default row cap can't
   // silently truncate results once lead counts grow.
- const fetchLeads = useCallback(async () => {
-  if (!selectedEventId) return
-  setLoading(true)
-  setError(null)
-  const PAGE = 1000
-  let allRows = []
-  let from = 0
-  while (true) {
-    let query = supabase
-      .from('leads')
-      .select('*, people(first_name, last_name, owner_email)')
-      .order('created_at', { ascending: false })
-      .order('lead_id', { ascending: true })
-      .range(from, from + PAGE - 1)
-    query = selectedEventId === 'NONE' ? query.is('event_id', null) : query.eq('event_id', selectedEventId)
-    const { data, error } = await query
-    if (error) { setError(error.message); setLoading(false); return }
-    allRows = allRows.concat(data || [])
-    if (!data || data.length < PAGE) break
-    from += PAGE
-  }
-  setLeads(allRows)
-  setLoading(false)
-}, [selectedEventId])
+  const fetchLeads = useCallback(async () => {
+    if (!selectedEventId) return
+    setLoading(true)
+    setError(null)
+    const PAGE = 1000
+    let allRows = []
+    let from = 0
+    while (true) {
+      let query = supabase
+        .from('leads')
+        .select('*, people(first_name, last_name, owner_email)')
+        .order('created_at', { ascending: false })
+        .order('lead_id', { ascending: true })
+        .range(from, from + PAGE - 1)
+      query = selectedEventId === 'NONE' ? query.is('event_id', null) : query.eq('event_id', selectedEventId)
+      const { data, error } = await query
+      if (error) { setError(error.message); setLoading(false); return }
+      allRows = allRows.concat(data || [])
+      if (!data || data.length < PAGE) break
+      from += PAGE
+    }
+    setLeads(allRows)
+    setLoading(false)
+  }, [selectedEventId])
 
   useEffect(() => { fetchLeads() }, [fetchLeads])
 
@@ -2817,8 +2825,6 @@ function LeadsPage({ showToast, onOpenLead }) {
 
   useEffect(() => { setLeadsPage(1) }, [search, statusFilter, activeOnly, selectedEventId])
 
-  
-
   // -------------------------------------------------------------------------
   // Step 1: event picker — shown until an event (or "no event") is chosen.
   // -------------------------------------------------------------------------
@@ -2836,7 +2842,10 @@ function LeadsPage({ showToast, onOpenLead }) {
               style={{ cursor: 'pointer' }}
               onClick={() => setSelectedEventId('NONE')}
             >
-          
+              <div>
+                <div className="crm-confirm-row-name">No event</div>
+                <div className="crm-confirm-row-sub">General leads not tied to any event</div>
+              </div>
             </div>
             {pickerEvents.map(e => (
               <div
