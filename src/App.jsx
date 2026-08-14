@@ -1645,9 +1645,6 @@ function PeoplePage({
               onChange={handleLinkEventChange}
               disabled={eventsLoading}
             >
-              <option value="">
-                No event (general lead)
-              </option>
 
               {events.map(e => (
                 <option
