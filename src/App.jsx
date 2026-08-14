@@ -1668,15 +1668,6 @@ function PeoplePage({
               Select all on this page
             </button>
 
-            <button
-              className="crm-toggle-chip"
-              onClick={selectAllFiltered}
-            >
-              Select all filtered (
-              {filtered.length}
-              )
-            </button>
-
             {selectedPersonIds.size > 0 && (
               <button
                 className="crm-toggle-chip"
