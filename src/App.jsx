@@ -906,6 +906,8 @@ function PeoplePage({
   const [editForm, setEditForm] = useState(null)
   const [editCompany, setEditCompany] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null) // person object | null
+  const [deleting, setDeleting] = useState(false)
 
   const [mode, setMode] = useState('browse')
   const [selectedPersonIds, setSelectedPersonIds] = useState(new Set())
@@ -1321,6 +1323,35 @@ function PeoplePage({
     setEditCompany(null)
 
     showToast('Person updated')
+  }
+
+  // ============================================================
+  // DELETE PERSON
+  // ============================================================
+
+  const deletePerson = async (person) => {
+    setDeleting(true)
+    const { error } = await supabase
+      .from('people')
+      .delete()
+      .eq('person_id', person.person_id)
+    setDeleting(false)
+
+    if (error) {
+      showToast(`Couldn't delete: ${error.message}`, true)
+      return
+    }
+
+    setPeople(prev => prev.filter(p => p.person_id !== person.person_id))
+    setLeadPersonIds(prev => {
+      if (!prev.has(person.person_id)) return prev
+      const next = new Set(prev)
+      next.delete(person.person_id)
+      return next
+    })
+    if (editingId === person.person_id) cancelEdit()
+    setDeleteTarget(null)
+    showToast('Person deleted')
   }
 
   // ============================================================
@@ -2197,6 +2228,18 @@ function PeoplePage({
                             <Pencil size={14} />
                           </button>
 
+                          <button
+                            className="crm-icon-action cancel"
+                            onClick={e => {
+                              e.stopPropagation()
+                              setDeleteTarget(p)
+                            }}
+                            aria-label="Delete person"
+                            title="Delete"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+
                         </div>
                       </td>
                     )}
@@ -2269,17 +2312,31 @@ function PeoplePage({
 
                     {!selecting && (
                       <td>
-                        <button
-                          className="crm-icon-action"
-                          onClick={e => {
-                            e.stopPropagation()
-                            startEdit(p)
-                          }}
-                          aria-label="Edit person"
-                          title="Edit"
-                        >
-                          <Pencil size={14} />
-                        </button>
+                        <div className="crm-row-actions">
+                          <button
+                            className="crm-icon-action"
+                            onClick={e => {
+                              e.stopPropagation()
+                              startEdit(p)
+                            }}
+                            aria-label="Edit person"
+                            title="Edit"
+                          >
+                            <Pencil size={14} />
+                          </button>
+
+                          <button
+                            className="crm-icon-action cancel"
+                            onClick={e => {
+                              e.stopPropagation()
+                              setDeleteTarget(p)
+                            }}
+                            aria-label="Delete person"
+                            title="Delete"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -2301,6 +2358,34 @@ function PeoplePage({
             setPage={setPeoplePage}
             total={filtered.length}
           />
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="crm-modal-overlay">
+          <div className="crm-modal-backdrop" onClick={() => !deleting && setDeleteTarget(null)} />
+          <div className="crm-modal-card" style={{ maxWidth: 380 }}>
+            <h4 className="crm-confirm-heading">
+              Delete {deleteTarget.first_name} {deleteTarget.last_name}?
+            </h4>
+            <p className="crm-confirm-note">
+              This permanently removes them from Supabase. This can't be undone.
+            </p>
+            <div className="crm-confirm-actions">
+              <button className="crm-btn-secondary" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+                Cancel
+              </button>
+              <button
+                className="crm-submit-btn"
+                style={{ width: 'auto', padding: '10px 20px', background: 'var(--red)' }}
+                onClick={() => deletePerson(deleteTarget)}
+                disabled={deleting}
+              >
+                {deleting ? <Loader2 size={15} className="crm-spin" /> : <Trash2 size={15} />}
+                Delete person
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
