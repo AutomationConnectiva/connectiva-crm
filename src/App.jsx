@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from './lib/supabase'
 import {
   Users, UserPlus, Calendar, Target, Menu, X, Search,
@@ -174,9 +175,10 @@ function CompanyPicker({ value, onChange, showToast }) {
   const [loaded, setLoaded] = useState(false)
   const [open, setOpen] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
+  const [coords, setCoords] = useState(null)
   const wrapRef = useRef(null)
+  const inputRef = useRef(null)
 
-  // Keep the input in sync if the parent resets `value` (e.g. cancelEdit).
   useEffect(() => {
     setQuery(value?.company_name || '')
   }, [value?.company_id, value?.company_name])
@@ -193,9 +195,36 @@ function CompanyPicker({ value, onChange, showToast }) {
     })()
   }, [loaded])
 
+  // Recompute the dropdown's screen position (viewport-relative, since we
+  // use position:fixed) any time it opens, and keep it in sync on scroll —
+  // including scrolling INSIDE the table wrapper, since that's the ancestor
+  // that used to clip this dropdown.
+  const updateCoords = useCallback(() => {
+    if (!inputRef.current) return
+    const r = inputRef.current.getBoundingClientRect()
+    setCoords({ top: r.bottom + 4, left: r.left, width: r.width })
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    updateCoords()
+    const onScrollOrResize = () => updateCoords()
+    // capture:true so this fires on scroll of ANY ancestor, not just window
+    // (e.g. the .crm-table-wrap's own overflow:auto scroll).
+    window.addEventListener('scroll', onScrollOrResize, true)
+    window.addEventListener('resize', onScrollOrResize)
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true)
+      window.removeEventListener('resize', onScrollOrResize)
+    }
+  }, [open, updateCoords])
+
   useEffect(() => {
     const onClickOutside = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+      if (wrapRef.current && !wrapRef.current.contains(e.target) &&
+          !e.target.closest('.crm-company-dropdown')) {
+        setOpen(false)
+      }
     }
     document.addEventListener('mousedown', onClickOutside)
     return () => document.removeEventListener('mousedown', onClickOutside)
@@ -207,12 +236,7 @@ function CompanyPicker({ value, onChange, showToast }) {
     : companies
 
   const exactMatch = companies.find(c => (c.company_name || '').toLowerCase() === q)
-
-  // True once the typed text has resolved to a real, existing company row —
-  // this is when we show the "edit" pencil instead of a country input.
   const isExistingCompany = !!value?.company_id
-  // True while the typed text hasn't matched anything yet — this is when
-  // we're on track to INSERT a new company row on save, so we ask for country now.
   const isNewCompany = q.length > 0 && !isExistingCompany
 
   const selectCompany = (c) => {
@@ -225,6 +249,7 @@ function CompanyPicker({ value, onChange, showToast }) {
     const v = e.target.value
     setQuery(v)
     setOpen(true)
+    updateCoords()
     const exact = companies.find(c => (c.company_name || '').toLowerCase() === v.trim().toLowerCase())
     if (!v.trim()) {
       onChange(null)
@@ -233,8 +258,6 @@ function CompanyPicker({ value, onChange, showToast }) {
     onChange(
       exact
         ? { company_id: exact.company_id, company_name: v, country: exact.country || '' }
-        // Preserve whatever country was already typed for a not-yet-matched
-        // new company, instead of wiping it out on every keystroke.
         : { company_id: null, company_name: v, country: value?.country || '' }
     )
   }
@@ -244,7 +267,6 @@ function CompanyPicker({ value, onChange, showToast }) {
   }
 
   const handleCompanySaved = (updated) => {
-    // Reflect the rename/country edit immediately in this picker + local list.
     setQuery(updated.company_name)
     onChange(updated)
     setCompanies(prev => prev.map(c => (c.company_id === updated.company_id ? { ...c, ...updated } : c)))
@@ -254,11 +276,12 @@ function CompanyPicker({ value, onChange, showToast }) {
     <div ref={wrapRef} className="crm-company-picker">
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <input
+          ref={inputRef}
           className="crm-input"
           value={query}
           placeholder="Company name"
           onChange={handleChange}
-          onFocus={() => setOpen(true)}
+          onFocus={() => { setOpen(true); updateCoords() }}
           style={{ flex: 1 }}
         />
         {isExistingCompany && (
@@ -284,8 +307,11 @@ function CompanyPicker({ value, onChange, showToast }) {
         />
       )}
 
-      {open && (matches.length > 0 || (q && !exactMatch)) && (
-        <div className="crm-company-dropdown">
+      {open && coords && (matches.length > 0 || (q && !exactMatch)) && createPortal(
+        <div
+          className="crm-company-dropdown"
+          style={{ position: 'fixed', top: coords.top, left: coords.left, width: coords.width, right: 'auto' }}
+        >
           {matches.map(c => {
             const isExact = (c.company_name || '').toLowerCase() === q
             return (
@@ -306,7 +332,8 @@ function CompanyPicker({ value, onChange, showToast }) {
               + Create new company "{query.trim()}"
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
 
       {showEdit && isExistingCompany && (
@@ -475,7 +502,7 @@ const CSS = `
 
   .crm-company-picker { position: relative; }
   .crm-company-dropdown {
-  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+  position: fixed; z-index: 999;
   background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.12); max-height: 220px; overflow-y: auto;
 }
