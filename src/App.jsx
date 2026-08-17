@@ -154,18 +154,102 @@ function FieldLabel({ children }) {
   return <label className="crm-field-label">{children}</label>
 }
 
+// Autocomplete company picker — loads the full companies list once, filters
+// client-side (case-insensitive substring) as the user types, and lets them
+// pick an existing company from a dropdown instead of retyping the name.
+// The moment the typed text exactly matches an existing name (any casing),
+// company_id is auto-resolved — so "connectiva" while "Connectiva" already
+// exists in the DB attaches to the SAME row instead of risking a near-dupe.
+// A new company is only ever created when nothing in the list matches at all,
+// and even then only on save (see saveEdit/save's ilike-then-insert fallback).
 function CompanyPicker({ value, onChange }) {
   const [query, setQuery] = useState(value?.company_name || '')
+  const [companies, setCompanies] = useState([])
+  const [loaded, setLoaded] = useState(false)
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef(null)
+
+  // Keep the input in sync if the parent resets `value` (e.g. cancelEdit).
+  useEffect(() => {
+    setQuery(value?.company_name || '')
+  }, [value?.company_id, value?.company_name])
+
+  useEffect(() => {
+    if (loaded) return
+    ;(async () => {
+      const { data, error } = await supabase
+        .from('companies')
+        .select('company_id, company_name')
+        .order('company_name', { ascending: true })
+      if (!error) setCompanies(data || [])
+      setLoaded(true)
+    })()
+  }, [loaded])
+
+  useEffect(() => {
+    const onClickOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [])
+
+  const q = query.trim().toLowerCase()
+  const matches = (q
+    ? companies.filter(c => (c.company_name || '').toLowerCase().includes(q))
+    : companies
+  ).slice(0, 8)
+
+  const exactMatch = companies.find(c => (c.company_name || '').toLowerCase() === q)
+
+  const selectCompany = (c) => {
+    setQuery(c.company_name)
+    onChange({ company_id: c.company_id, company_name: c.company_name })
+    setOpen(false)
+  }
+
+  const handleChange = (e) => {
+    const v = e.target.value
+    setQuery(v)
+    setOpen(true)
+    const exact = companies.find(c => (c.company_name || '').toLowerCase() === v.trim().toLowerCase())
+    onChange(v.trim() ? { company_id: exact ? exact.company_id : null, company_name: v } : null)
+  }
+
   return (
-    <input
-      className="crm-input"
-      value={query}
-      placeholder="Company name"
-      onChange={e => {
-        setQuery(e.target.value)
-        onChange(e.target.value ? { company_id: null, company_name: e.target.value } : null)
-      }}
-    />
+    <div ref={wrapRef} className="crm-company-picker">
+      <input
+        className="crm-input"
+        value={query}
+        placeholder="Company name"
+        onChange={handleChange}
+        onFocus={() => setOpen(true)}
+      />
+      {open && (matches.length > 0 || (q && !exactMatch)) && (
+        <div className="crm-company-dropdown">
+          {matches.map(c => {
+            const isExact = (c.company_name || '').toLowerCase() === q
+            return (
+              <div
+                key={c.company_id}
+                className={`crm-company-dropdown-item${isExact ? ' exact' : ''}`}
+                onMouseDown={() => selectCompany(c)}
+              >
+                {c.company_name}
+              </div>
+            )
+          })}
+          {q && !exactMatch && (
+            <div
+              className="crm-company-dropdown-create"
+              onMouseDown={() => setOpen(false)}
+            >
+              + Create new company "{query.trim()}"
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -282,6 +366,23 @@ const CSS = `
   .crm-name-cell { display: flex; align-items: center; gap: 10px; font-weight: 500; color: var(--ink-950); }
   .crm-empty-row td { text-align: center; padding: 40px 24px; color: var(--ink-400); }
   .crm-avatar { width: 32px; height: 32px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+
+  .crm-company-picker { position: relative; }
+  .crm-company-dropdown {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12); max-height: 220px; overflow-y: auto;
+}
+  .crm-company-dropdown-item {
+  padding: 9px 14px; font-size: 13.5px; color: var(--ink-900); cursor: pointer;
+}
+  .crm-company-dropdown-item:hover { background: var(--paper); }
+  .crm-company-dropdown-item.exact { color: var(--accent-ink); font-weight: 500; }
+  .crm-company-dropdown-create {
+  padding: 9px 14px; font-size: 13px; color: var(--accent-ink); cursor: pointer;
+  border-top: 1px solid var(--line); font-weight: 500;
+}
+ .crm-company-dropdown-create:hover { background: var(--accent-soft); }
 
   .crm-cell-input { width: 100%; min-width: 90px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); font-size: 13px; font-family: inherit; outline: none; }
   .crm-cell-input:focus { border-color: var(--accent); }
