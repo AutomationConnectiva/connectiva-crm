@@ -1437,109 +1437,105 @@ function PeoplePage({
     setEditCompany(null)
   }
 
-  const saveEdit = async (personId) => {
-    setSaving(true)
+ const saveEdit = async (personId) => {
+  setSaving(true)
+  let companyId = editCompany?.company_id || null
 
-    let companyId = editCompany?.company_id || null
+  if (
+    !companyId &&
+    editCompany?.company_name?.trim()
+  ) {
+    const name = editCompany.company_name.trim()
+    const {
+      data: existing,
+      error: lookupError,
+    } = await supabase
+      .from('companies')
+      .select('company_id')
+      .ilike('company_name', name)
+      .limit(1)
+      .maybeSingle()
 
-    if (
-      !companyId &&
-      editCompany?.company_name?.trim()
-    ) {
-      const name = editCompany.company_name.trim()
-
-      const {
-        data: existing,
-        error: lookupError,
-      } = await supabase
-        .from('companies')
-        .select('company_id')
-        .ilike('company_name', name)
-        .limit(1)
-        .maybeSingle()
-
-      if (lookupError) {
-        setSaving(false)
-        showToast(
-          `Couldn't check company: ${lookupError.message}`,
-          true
-        )
-        return
-      }
-
-      if (existing) {
-        companyId = existing.company_id
-      } else {
-        const {
-          data: created,
-          error: createError,
-        } = await supabase
-          .from('companies')
-          .insert({
-            company_name: name,
-          })
-          .select('company_id')
-          .single()
-
-        if (createError) {
-          setSaving(false)
-          showToast(
-            `Couldn't create company: ${createError.message}`,
-            true
-          )
-          return
-        }
-
-        companyId = created.company_id
-      }
-    }
-
-   const { error } = await supabase
-      .from('people')
-      .update({
-        ...editForm,
-        email: editForm.email?.trim() || null,
-        email1: editForm.email1?.trim() || null,
-        company_id: companyId,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('person_id', personId)
-
-    setSaving(false)
-
-    if (error) {
+    if (lookupError) {
+      setSaving(false)
       showToast(
-        `Couldn't save: ${error.message}`,
+        `Couldn't check company: ${lookupError.message}`,
         true
       )
       return
     }
 
-    setPeople(prev =>
-      prev.map(p =>
-        p.person_id === personId
-          ? {
-              ...p,
-              ...editForm,
-              company_id: companyId,
-              companies: editCompany
-                ? {
-                    company_name:
-                      editCompany.company_name,
-                  }
-                : null,
-            }
-          : p
-      )
-    )
+    if (existing) {
+      companyId = existing.company_id
+    } else {
+      const {
+        data: created,
+        error: createError,
+      } = await supabase
+        .from('companies')
+        .insert({
+          company_name: name,
+          country: editCompany.country?.trim() || null, // ← added: country now persists for new companies
+        })
+        .select('company_id')
+        .single()
 
-    setEditingId(null)
-    setEditForm(null)
-    setEditCompany(null)
-
-    showToast('Person updated')
+      if (createError) {
+        setSaving(false)
+        showToast(
+          `Couldn't create company: ${createError.message}`,
+          true
+        )
+        return
+      }
+      companyId = created.company_id
+    }
   }
 
+  const { error } = await supabase
+    .from('people')
+    .update({
+      ...editForm,
+      email: editForm.email?.trim() || null,
+      email1: editForm.email1?.trim() || null,
+      company_id: companyId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('person_id', personId)
+
+  setSaving(false)
+
+  if (error) {
+    showToast(
+      `Couldn't save: ${error.message}`,
+      true
+    )
+    return
+  }
+
+  setPeople(prev =>
+    prev.map(p =>
+      p.person_id === personId
+        ? {
+            ...p,
+            ...editForm,
+            company_id: companyId,
+            companies: editCompany
+              ? {
+                  company_name: editCompany.company_name,
+                  country: editCompany.country,
+                }
+              : null,
+          }
+        : p
+    )
+  )
+
+  setEditingId(null)
+  setEditForm(null)
+  setEditCompany(null)
+  showToast('Person updated')
+}
   // ============================================================
   // DELETE PERSON
   // ============================================================
@@ -2266,9 +2262,8 @@ showToast(
                       <td>
                         <CompanyPicker
                           value={editCompany}
-                          onChange={
-                            setEditCompany
-                          }
+                          onChange={setEditCompany}
+                           showToast={showToast}
                         />
                       </td>
 
@@ -3286,7 +3281,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLe
       } else {
         const { data: created, error: createError } = await supabase
           .from('companies')
-          .insert({ company_name: name })
+          .insert({ company_name: name, country: company.country?.trim() || null })
           .select('company_id')
           .single()
         if (createError) { setSaving(false); showToast(`Couldn't create company: ${createError.message}`, true); return }
@@ -3378,7 +3373,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLe
         </div>
         <div className="crm-form-row">
           <div><FieldLabel>Country</FieldLabel><input className="crm-input" value={form.country} onChange={set('country')} /></div>
-          <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} /></div>
+          <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} showToast={showToast} /></div>
         </div>
         <div className="crm-form-row">
           <div><FieldLabel>Lead purpose</FieldLabel><input className="crm-input" value={form.lead_purpose} onChange={set('lead_purpose')} placeholder="e.g. Sponsor Acquisition, Event Invitation" /></div>
@@ -4362,7 +4357,7 @@ function PersonForm({ showToast }) {
       </div>
       <div className="crm-form-row">
         <div><FieldLabel>Country</FieldLabel><input value={form.country} onChange={set('country')} className="crm-input" /></div>
-        <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} /></div>
+        <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} showToast={showToast} /></div>
       </div>
       <div className="crm-form-row">
         <div><FieldLabel>Phone</FieldLabel><input value={form.phone} onChange={set('phone')} className="crm-input" /></div>
