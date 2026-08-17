@@ -1690,50 +1690,34 @@ function PeoplePage({
     // requiring a page refresh.
     // ==========================================================
 
-    setLeadPersonIds(prev => {
-      const next = new Set(prev)
+setLeadPersonIds(prev => {
+  const next = new Set(prev)
+  rows.forEach(row => {
+    next.add(row.person_id)
+  })
+  return next
+})
 
-      rows.forEach(row => {
-        next.add(row.person_id)
-      })
+fetchPeople()
+fetchLeadPersonIds()
+    
+const newLeadIds = (inserted || []).map(r => r.lead_id)
+const count = rows.length
 
-      return next
-    })
+showToast(
+  `${count} ${count === 1 ? 'lead' : 'leads'} created`,
+  false,
+  newLeadIds.length > 0
+    ? async () => {
+        const { error: undoError } = await supabase
+          .from('leads')
+          .delete()
+          .in('lead_id', newLeadIds)
 
-    const newLeadIds =
-      (inserted || []).map(
-        r => r.lead_id
-      )
-
-    const count = rows.length
-
-    showToast(
-      `${count} ${
-        count === 1
-          ? 'lead'
-          : 'leads'
-      } created`,
-      false,
-      newLeadIds.length > 0
-        ? async () => {
-
-            const {
-              error: undoError,
-            } = await supabase
-              .from('leads')
-              .delete()
-              .in(
-                'lead_id',
-                newLeadIds
-              )
-
-            if (undoError) {
-              showToast(
-                `Couldn't undo: ${undoError.message}`,
-                true
-              )
-              return
-            }
+        if (undoError) {
+          showToast(`Couldn't undo: ${undoError.message}`, true)
+          return
+        }
 
             // Put them back into People
             // because their lead was removed.
@@ -1749,15 +1733,12 @@ function PeoplePage({
               return next
             })
 
-            showToast(
-              `Undone — ${count} ${
-                count === 1
-                  ? 'lead'
-                  : 'leads'
-              } removed`
-            )
-          }
-        : null
+           fetchPeople()
+        fetchLeadPersonIds()
+
+        showToast(`Undone — ${count} ${count === 1 ? 'lead' : 'leads'} removed`)
+      }
+    : null
     )
 
     setSidebarCollapsed(
