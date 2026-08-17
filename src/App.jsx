@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from 'react'
 import { supabase } from './lib/supabase'
 import {
   Users, UserPlus, Calendar, Target, Menu, X, Search,
@@ -103,6 +103,12 @@ function formatDateTime(d) {
 // like it "redirected once then reopened the app" — it was just React Router
 // (or a full page load) navigating within connectiva-crm itself instead of
 // leaving the site.
+function openPersonInNewTab(personId) {
+  const url = new URL(window.location.href)
+  url.searchParams.set('person', personId)
+  window.open(url.toString(), '_blank', 'noopener,noreferrer')
+}
+
 function externalUrl(u) {
   if (!u) return null
   const trimmed = u.trim()
@@ -899,6 +905,13 @@ const fetchLeadEventMap = useCallback(async () => {
   // detail = null | { type: 'person' | 'lead', id }
   // When set, a full-page detail view replaces the current page's content.
   const [detail, setDetail] = useState(null)
+  useEffect(() => {
+  const params = new URLSearchParams(window.location.search)
+  const personId = params.get('person')
+  if (personId) {
+    setDetail({ type: 'person', id: /^\d+$/.test(personId) ? Number(personId) : personId })
+  }
+}, [])
   const openPerson = (id) => setDetail({ type: 'person', id })
   const openLead = (id) => setDetail({ type: 'lead', id })
   const closeDetail = () => setDetail(null)
@@ -1107,6 +1120,33 @@ function PeoplePage({
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [editCompany, setEditCompany] = useState(null)
+
+const [expandedPersonId, setExpandedPersonId] = useState(null)
+const [leadPurposeDraft, setLeadPurposeDraft] = useState('')
+const [savingLeadPurpose, setSavingLeadPurpose] = useState(false)
+
+const toggleExpand = (p) => {
+  if (expandedPersonId === p.person_id) {
+    setExpandedPersonId(null)
+  } else {
+    setExpandedPersonId(p.person_id)
+    setLeadPurposeDraft(p.lead_purpose || '')
+  }
+}
+
+const saveLeadPurpose = async (personId) => {
+  setSavingLeadPurpose(true)
+  const { error } = await supabase
+    .from('people')
+    .update({ lead_purpose: leadPurposeDraft || null, updated_at: new Date().toISOString() })
+    .eq('person_id', personId)
+  setSavingLeadPurpose(false)
+  if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
+  setPeople(prev => prev.map(p => p.person_id === personId ? { ...p, lead_purpose: leadPurposeDraft || null } : p))
+  showToast('Lead purpose updated')
+  setExpandedPersonId(null)
+}
+  
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null) // person object | null
   const [deleting, setDeleting] = useState(false)
@@ -1135,7 +1175,7 @@ function PeoplePage({
     while (true) {
       const { data, error } = await supabase
         .from('people')
-        .select('*, companies(company_name)')
+        .select('*, companies(company_name, country)')
         .order('created_at', { ascending: false })
         .order('person_id', { ascending: true })
         .range(from, from + PAGE - 1)
@@ -1419,6 +1459,7 @@ function PeoplePage({
       country: p.country || '',
       status: p.status || '',
       industry: p.industry || '',
+      linkedin_url: p.linkedin_url || '',
     })
 
     setEditCompany(
@@ -1426,6 +1467,7 @@ function PeoplePage({
         ? {
             company_id: p.company_id,
             company_name: p.companies.company_name,
+            country: p.companies.country || '',
           }
         : null
     )
@@ -2119,488 +2161,357 @@ showToast(
                     p.person_id
                   )
 
-                const isEditing =
-                  editingId ===
-                  p.person_id
+      const isEditing = editingId === p.person_id
 
-                const history =
-                  pastEventsByPerson[
-                    p.person_id
-                  ] || []
+const history = pastEventsByPerson[p.person_id] || []
 
-                const pastEventsCell = (
-                  <td>
-                    {pastEventsLoading ? (
-                      <span className="crm-muted">
-                        …
-                      </span>
-                    ) : history.length === 0 ? (
-                      <span className="crm-muted">
-                        —
-                      </span>
-                    ) : (
-                      history
-                        .map(h => h.event_id)
-                        .join(', ')
-                    )}
-                  </td>
-                )
+const pastEventsCell = (
+  <td>
+    {pastEventsLoading ? (
+      <span className="crm-muted">…</span>
+    ) : history.length === 0 ? (
+      <span className="crm-muted">—</span>
+    ) : (
+      history.map(h => h.event_id).join(', ')
+    )}
+  </td>
+)
 
-                if (isEditing) {
-                  return (
-                    <tr
-                      key={p.person_id}
-                      className="editing"
-                    >
-                      {selecting && <td />}
-                      {selecting && <td />}
+if (isEditing) {
+  return (
+    <tr key={p.person_id} className="editing">
+      {selecting && <td />}
+      {selecting && <td />}
 
-                      <td>
-                        <input
-                          className="crm-cell-input"
-                          value={
-                            editForm.first_name
-                          }
-                          onChange={e =>
-                            setEditForm({
-                              ...editForm,
-                              first_name:
-                                e.target.value,
-                            })
-                          }
-                          placeholder="First name"
-                        />
+      <td>
+        <input
+          className="crm-cell-input"
+          value={editForm.first_name}
+          onChange={e => setEditForm({ ...editForm, first_name: e.target.value })}
+          placeholder="First name"
+        />
+        <input
+          className="crm-cell-input"
+          value={editForm.last_name}
+          onChange={e => setEditForm({ ...editForm, last_name: e.target.value })}
+          placeholder="Last name"
+        />
+      </td>
 
-                        <input
-                          className="crm-cell-input"
-                          value={
-                            editForm.last_name
-                          }
-                          onChange={e =>
-                            setEditForm({
-                              ...editForm,
-                              last_name:
-                                e.target.value,
-                            })
-                          }
-                          placeholder="Last name"
-                        />
-                      </td>
+      <td>
+        <input
+          className="crm-cell-input"
+          value={editForm.email}
+          onChange={e => setEditForm({ ...editForm, email: e.target.value })}
+        />
+      </td>
+      <td>
+        <input
+          className="crm-cell-input"
+          value={editForm.email1}
+          onChange={e => setEditForm({ ...editForm, email1: e.target.value })}
+        />
+      </td>
 
-                      <td>
-                        <input
-                          className="crm-cell-input"
-                          value={
-                            editForm.email
-                          }
-                          onChange={e =>
-                            setEditForm({
-                              ...editForm,
-                              email:
-                                e.target.value,
-                            })
-                          }
-                        />
-                      </td>
-                      <td>
-                       <input
-                        className="crm-cell-input"
-                        value={editForm.email1
-                        }
-                        onChange={e => 
-                          setEditForm({ ...editForm, email1: e.target.value })}
-                           />
-                       </td>
+      <td>
+        <input
+          className="crm-cell-input"
+          value={editForm.job_title}
+          onChange={e => setEditForm({ ...editForm, job_title: e.target.value })}
+        />
+      </td>
 
-                      <td>
-                        <input
-                          className="crm-cell-input"
-                          value={
-                            editForm.job_title
-                          }
-                          onChange={e =>
-                            setEditForm({
-                              ...editForm,
-                              job_title:
-                                e.target.value,
-                            })
-                          }
-                        />
-                      </td>
+      <td>
+        <select
+          className="crm-cell-select"
+          value={editForm.industry}
+          onChange={e => setEditForm({ ...editForm, industry: e.target.value })}
+        >
+          <option value="">—</option>
+          {INDUSTRY_OPTIONS.map(i => (
+            <option key={i} value={i}>{i}</option>
+          ))}
+        </select>
+      </td>
 
-                      <td>
-                        <select
-                          className="crm-cell-select"
-                          value={
-                            editForm.industry
-                          }
-                          onChange={e =>
-                            setEditForm({
-                              ...editForm,
-                              industry:
-                                e.target.value,
-                            })
-                          }
-                        >
-                          <option value="">
-                            —
-                          </option>
+      <td>
+        <CompanyPicker
+          value={editCompany}
+          onChange={setEditCompany}
+          showToast={showToast}
+        />
+      </td>
 
-                          {INDUSTRY_OPTIONS.map(
-                            i => (
-                              <option
-                                key={i}
-                                value={i}
-                              >
-                                {i}
-                              </option>
-                            )
-                          )}
-                        </select>
-                      </td>
+      <td>
+        <input
+          className="crm-cell-input"
+          value={editForm.country}
+          onChange={e => setEditForm({ ...editForm, country: e.target.value })}
+        />
+      </td>
 
-                      <td>
-                        <CompanyPicker
-                          value={editCompany}
-                          onChange={setEditCompany}
-                           showToast={showToast}
-                        />
-                      </td>
+      {/* LinkedIn — now the single, editable column. The old read-only
+          <a> link that used to live here was removed: having both was
+          adding an extra column that pushed everything after it (Status,
+          Past Events, actions) out of alignment with the header row. */}
+      <td>
+        <input
+          className="crm-cell-input"
+          value={editForm.linkedin_url}
+          onChange={e => setEditForm({ ...editForm, linkedin_url: e.target.value })}
+          placeholder="linkedin.com/in/…"
+        />
+      </td>
 
-                      <td>
-                        <input
-                          className="crm-cell-input"
-                          value={
-                            editForm.country
-                          }
-                          onChange={e =>
-                            setEditForm({
-                              ...editForm,
-                              country:
-                                e.target.value,
-                            })
-                          }
-                        />
-                      </td>
+      <td>
+        <select
+          className="crm-cell-select"
+          value={editForm.status}
+          onChange={e => setEditForm({ ...editForm, status: e.target.value })}
+        >
+          <option value="">—</option>
+          {STATUS_OPTIONS.map(s => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </td>
 
-                      <td>
-                        {p.linkedin_url ? (
-                          <a
-                            href={externalUrl(
-                              p.linkedin_url
-                            )}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={e =>
-                              e.stopPropagation()
-                            }
-                          >
-                            View ↗
-                          </a>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
+      {pastEventsCell}
 
-                      <td>
-                        <select
-                          className="crm-cell-select"
-                          value={
-                            editForm.status
-                          }
-                          onChange={e =>
-                            setEditForm({
-                              ...editForm,
-                              status:
-                                e.target.value,
-                            })
-                          }
-                        >
-                          <option value="">
-                            —
-                          </option>
-
-                          {STATUS_OPTIONS.map(
-                            s => (
-                              <option
-                                key={s}
-                                value={s}
-                              >
-                                {s}
-                              </option>
-                            )
-                          )}
-                        </select>
-                      </td>
-
-                      {pastEventsCell}
-
-                      <td>
-                        <div className="crm-row-actions">
-                          <button
-                            className="crm-icon-action save"
-                            onClick={() =>
-                              saveEdit(
-                                p.person_id
-                              )
-                            }
-                            disabled={saving}
-                            aria-label="Save"
-                          >
-                            {saving ? (
-                              <Loader2
-                                size={14}
-                                className="crm-spin"
-                              />
-                            ) : (
-                              <Save size={14} />
-                            )}
-                          </button>
-
-                          <button
-                            className="crm-icon-action cancel"
-                            onClick={
-                              cancelEdit
-                            }
-                            aria-label="Cancel"
-                          >
-                            <XCircle size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                }
-
-                return (
-                  <tr
-                    key={p.person_id}
-                    className="clickable"
-                    onClick={() => {
-                      if (selecting) {
-                        togglePerson(
-                          p.person_id
-                        )
-                      } else {
-                        onOpenPerson(
-                          p.person_id
-                        )
-                      }
-                    }}
-                  >
-                    {selecting && (
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={selectedPersonIds.has(
-                            p.person_id
-                          )}
-                          onChange={() =>
-                            togglePerson(
-                              p.person_id
-                            )
-                          }
-                          onClick={e =>
-                            e.stopPropagation()
-                          }
-                        />
-                      </td>
-                    )}
-
-                    {selecting && (
-                      <td>
-                        <div className="crm-row-actions">
-
-                          <button
-                            className="crm-icon-action"
-                            onClick={e => {
-                              e.stopPropagation()
-                              onOpenPerson(
-                                p.person_id
-                              )
-                            }}
-                            aria-label="View details"
-                            title="View details"
-                          >
-                            <Eye size={14} />
-                          </button>
-
-                          <button
-                            className="crm-icon-action"
-                            onClick={e => {
-                              e.stopPropagation()
-                              startEdit(p)
-                            }}
-                            aria-label="Edit person"
-                            title="Edit"
-                          >
-                            <Pencil size={14} />
-                          </button>
-
-                          <button
-                            className="crm-icon-action cancel"
-                            onClick={e => {
-                              e.stopPropagation()
-                              setDeleteTarget(p)
-                            }}
-                            aria-label="Delete person"
-                            title="Delete"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-
-                        </div>
-                      </td>
-                    )}
-
-                    <td>
-                      <div className="crm-name-cell">
-                        <div
-                          className="crm-avatar"
-                          style={{
-                            background:
-                              av.bg,
-                            color:
-                              av.fg,
-                          }}
-                        >
-                          {initials(
-                            p.first_name,
-                            p.last_name
-                          )}
-                        </div>
-
-                        <span>
-                          {p.first_name}{' '}
-                          {p.last_name}
-                        </span>
-
-                        {alreadyLead && (
-                          <span className="crm-lead-tag">
-                            Lead
-                          </span>
-                        )}
-                      </div>
-                    </td>
-
-                    <td>{p.email}</td>
-                    <td>{p.email1 || '-'}</td>
-                    <td>{p.job_title || '-'}</td>
-                    <td>{p.industry || '-'}</td>
-                    <td>
-                      {p.companies?.company_name ||
-                        '—'}
-                    </td>
-                    <td>{p.country || '—'}</td>
-
-                    <td>
-                      {p.linkedin_url ? (
-                        <a
-                          href={externalUrl(
-                            p.linkedin_url
-                          )}
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={e =>
-                            e.stopPropagation()
-                          }
-                        >
-                          View ↗
-                        </a>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-
-                    <td>
-                      <Badge
-                        value={p.status}
-                      />
-                    </td>
-
-                    {pastEventsCell}
-
-                    {!selecting && (
-                      <td>
-                        <div className="crm-row-actions">
-                          <button
-                            className="crm-icon-action"
-                            onClick={e => {
-                              e.stopPropagation()
-                              startEdit(p)
-                            }}
-                            aria-label="Edit person"
-                            title="Edit"
-                          >
-                            <Pencil size={14} />
-                          </button>
-
-                          <button
-                            className="crm-icon-action cancel"
-                            onClick={e => {
-                              e.stopPropagation()
-                              setDeleteTarget(p)
-                            }}
-                            aria-label="Delete person"
-                            title="Delete"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                )
-              })}
-
-              {filtered.length === 0 && (
-                <tr className="crm-empty-row">
-                  <td colSpan={COLUMN_COUNT}>
-                    No one matches that search.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-
-          <Pagination
-            page={peoplePage}
-            setPage={setPeoplePage}
-            total={filtered.length}
-          />
+      <td>
+        <div className="crm-row-actions">
+          <button
+            className="crm-icon-action save"
+            onClick={() => saveEdit(p.person_id)}
+            disabled={saving}
+            aria-label="Save"
+          >
+            {saving ? <Loader2 size={14} className="crm-spin" /> : <Save size={14} />}
+          </button>
+          <button className="crm-icon-action cancel" onClick={cancelEdit} aria-label="Cancel">
+            <XCircle size={14} />
+          </button>
         </div>
-      )}
-
-      {deleteTarget && (
-        <div className="crm-modal-overlay">
-          <div className="crm-modal-backdrop" onClick={() => !deleting && setDeleteTarget(null)} />
-          <div className="crm-modal-card" style={{ maxWidth: 380 }}>
-            <h4 className="crm-confirm-heading">
-              Delete {deleteTarget.first_name} {deleteTarget.last_name}?
-            </h4>
-            <p className="crm-confirm-note">
-              This permanently removes them from Supabase. This can't be undone.
-            </p>
-            <div className="crm-confirm-actions">
-              <button className="crm-btn-secondary" onClick={() => setDeleteTarget(null)} disabled={deleting}>
-                Cancel
-              </button>
-              <button
-                className="crm-submit-btn"
-                style={{ width: 'auto', padding: '10px 20px', background: 'var(--red)' }}
-                onClick={() => deletePerson(deleteTarget)}
-                disabled={deleting}
-              >
-                {deleting ? <Loader2 size={15} className="crm-spin" /> : <Trash2 size={15} />}
-                Delete person
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      </td>
+    </tr>
   )
+}
 
+return (
+  <Fragment key={p.person_id}>
+    <tr
+      className="clickable"
+      onClick={() => {
+        if (selecting) {
+          togglePerson(p.person_id)
+        } else {
+          onOpenPerson(p.person_id)
+        }
+      }}
+    >
+      {selecting && (
+        <td>
+          <input
+            type="checkbox"
+            checked={selectedPersonIds.has(p.person_id)}
+            onChange={() => togglePerson(p.person_id)}
+            onClick={e => e.stopPropagation()}
+          />
+        </td>
+      )}
+
+      {selecting && (
+        <td>
+          <div className="crm-row-actions">
+            <button
+              className="crm-icon-action"
+              onClick={e => {
+                e.stopPropagation()
+                // Opens in a NEW tab instead of navigating this one, so
+                // viewing someone's profile mid-selection never discards
+                // the batch you've already built up in the side panel.
+                openPersonInNewTab(p.person_id)
+              }}
+              aria-label="View details"
+              title="View details (opens in a new tab)"
+            >
+              <Eye size={14} />
+            </button>
+
+            <button
+              className="crm-icon-action"
+              onClick={e => { e.stopPropagation(); startEdit(p) }}
+              aria-label="Edit person"
+              title="Edit"
+            >
+              <Pencil size={14} />
+            </button>
+
+            <button
+              className="crm-icon-action cancel"
+              onClick={e => { e.stopPropagation(); setDeleteTarget(p) }}
+              aria-label="Delete person"
+              title="Delete"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        </td>
+      )}
+
+      <td>
+        <div className="crm-name-cell">
+          <div className="crm-avatar" style={{ background: av.bg, color: av.fg }}>
+            {initials(p.first_name, p.last_name)}
+          </div>
+          <span>{p.first_name} {p.last_name}</span>
+          {alreadyLead && <span className="crm-lead-tag">Lead</span>}
+        </div>
+      </td>
+
+      <td>{p.email}</td>
+      <td>{p.email1 || '-'}</td>
+      <td>{p.job_title || '-'}</td>
+      <td>{p.industry || '-'}</td>
+      <td>{p.companies?.company_name || '—'}</td>
+      <td>{p.country || '—'}</td>
+
+      <td>
+        {p.linkedin_url ? (
+          
+            href={externalUrl(p.linkedin_url)}
+            target="_blank"
+            rel="noreferrer"
+            onClick={e => e.stopPropagation()}
+          >
+            View ↗
+          </a>
+        ) : (
+          '—'
+        )}
+      </td> 
+
+      <td><Badge value={p.status} /></td>
+
+      {pastEventsCell}
+
+      {!selecting && (
+        <td>
+          <div className="crm-row-actions">
+            <button
+              className="crm-icon-action"
+              onClick={e => {
+                e.stopPropagation()
+                toggleExpand(p)
+              }}
+              aria-label={expandedPersonId === p.person_id ? 'Collapse' : 'Edit lead purpose'}
+              title="Edit lead purpose"
+            >
+              {expandedPersonId === p.person_id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+
+            <button
+              className="crm-icon-action"
+              onClick={e => { e.stopPropagation(); startEdit(p) }}
+              aria-label="Edit person"
+              title="Edit"
+            >
+              <Pencil size={14} />
+            </button>
+
+            <button
+              className="crm-icon-action cancel"
+              onClick={e => { e.stopPropagation(); setDeleteTarget(p) }}
+              aria-label="Delete person"
+              title="Delete"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        </td>
+      )}
+    </tr>
+
+    {expandedPersonId === p.person_id && (
+      <tr>
+        <td colSpan={COLUMN_COUNT} style={{ background: 'var(--paper)', padding: '14px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <FieldLabel>Lead purpose</FieldLabel>
+            <select
+              className="crm-select"
+              style={{ maxWidth: 260 }}
+              value={leadPurposeDraft}
+              onChange={e => setLeadPurposeDraft(e.target.value)}
+            >
+              <option value="">—</option>
+              {COMBINED_PURPOSE_OPTIONS.map(opt => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+            <button
+              className="crm-icon-action save"
+              onClick={() => saveLeadPurpose(p.person_id)}
+              disabled={savingLeadPurpose}
+              aria-label="Save lead purpose"
+            >
+              {savingLeadPurpose ? <Loader2 size={14} className="crm-spin" /> : <Save size={14} />}
+            </button>
+            <button
+              className="crm-icon-action cancel"
+              onClick={() => setExpandedPersonId(null)}
+              aria-label="Cancel"
+            >
+              <XCircle size={14} />
+            </button>
+          </div>
+        </td>
+      </tr>
+    )}
+  </Fragment>
+)
+})}
+
+{filtered.length === 0 && (
+  <tr className="crm-empty-row">
+    <td colSpan={COLUMN_COUNT}>No one matches that search.</td>
+  </tr>
+)}
+</tbody>
+</table>
+
+<Pagination page={peoplePage} setPage={setPeoplePage} total={filtered.length} />
+</div>
+)}
+
+{deleteTarget && (
+<div className="crm-modal-overlay">
+  <div className="crm-modal-backdrop" onClick={() => !deleting && setDeleteTarget(null)} />
+  <div className="crm-modal-card" style={{ maxWidth: 380 }}>
+    <h4 className="crm-confirm-heading">
+      Delete {deleteTarget.first_name} {deleteTarget.last_name}?
+    </h4>
+    <p className="crm-confirm-note">
+      This permanently removes them from Supabase. This can't be undone.
+    </p>
+    <div className="crm-confirm-actions">
+      <button className="crm-btn-secondary" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+        Cancel
+      </button>
+      <button
+        className="crm-submit-btn"
+        style={{ width: 'auto', padding: '10px 20px', background: 'var(--red)' }}
+        onClick={() => deletePerson(deleteTarget)}
+        disabled={deleting}
+      >
+        {deleting ? <Loader2 size={15} className="crm-spin" /> : <Trash2 size={15} />}
+        Delete person
+      </button>
+    </div>
+  </div>
+</div>
+)}
+</div>
+)
   // ============================================================
   // NO SELECTION
   // ============================================================
@@ -3221,7 +3132,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLe
     setError(null)
     const { data, error } = await supabase
       .from('people')
-      .select('*, companies(company_id, company_name)')
+      .select('*, companies(company_id, company_name, country)')
       .eq('person_id', personId)
       .single()
     if (error) setError(error.message)
@@ -3233,7 +3144,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLe
         mobile: data.mobile || '', linkedin_url: data.linkedin_url || '', status: data.status || '',
         industry: data.industry || '', lead_purpose: data.lead_purpose || '', owner_email: data.owner_email || '',
       })
-      setCompany(data.companies ? { company_id: data.companies.company_id, company_name: data.companies.company_name } : null)
+      setCompany(data.companies ? { company_id: data.companies.company_id, company_name: data.companies.company_name, country: data.companies.country || '' } : null)
     }
     setLoading(false)
   }, [personId])
@@ -4318,7 +4229,7 @@ function PersonForm({ showToast }) {
     } else {
       const { data: created, error: createError } = await supabase
         .from('companies')
-        .insert({ company_name: name })
+        .insert({ company_name: name, country: company.country?.trim() || null })
         .select('company_id')
         .single()
       if (createError) { setSubmitting(false); showToast(`Couldn't create company: ${createError.message}`, true); return }
