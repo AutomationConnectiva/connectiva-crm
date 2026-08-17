@@ -4,8 +4,8 @@ import { supabase } from './lib/supabase'
 import {
   Users, UserPlus, Calendar, Target, Menu, X, Search,
   Clock, Check, Save, XCircle, Loader2,
-  UserCheck, Trash2, LogOut, ArrowLeft, Eye, Pencil, ChevronDown, ChevronUp, AlertTriangle,
-  Mail, MessageSquare, Ban, History
+  UserCheck, Trash2, LogOut, ArrowLeft, ArrowRight, Eye, Pencil, ChevronDown, ChevronUp, AlertTriangle,
+  Mail, MessageSquare, Ban, History, Copy
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -103,10 +103,23 @@ function formatDateTime(d) {
 // domain when used directly as an <a href>, which is why clicking it looked
 // like it "redirected once then reopened the app" — it was just React Router
 // (or a full page load) navigating within connectiva-crm itself instead of
-// leaving the site.
-function openPersonInNewTab(personId) {
+function openPersonInNewTab(personId, previousId = null, nextId = null) {
   const url = new URL(window.location.href)
+
   url.searchParams.set('person', personId)
+
+  if (previousId) {
+    url.searchParams.set('prev', previousId)
+  } else {
+    url.searchParams.delete('prev')
+  }
+
+  if (nextId) {
+    url.searchParams.set('next', nextId)
+  } else {
+    url.searchParams.delete('next')
+  }
+
   window.open(url.toString(), '_blank', 'noopener,noreferrer')
 }
 
@@ -986,15 +999,51 @@ const fetchLeadEventMap = useCallback(async () => {
   // When set, a full-page detail view replaces the current page's content.
   const [detail, setDetail] = useState(null)
   useEffect(() => {
+useEffect(() => {
   const params = new URLSearchParams(window.location.search)
+
   const personId = params.get('person')
+  const prevId = params.get('prev')
+  const nextId = params.get('next')
+
   if (personId) {
-    setDetail({ type: 'person', id: /^\d+$/.test(personId) ? Number(personId) : personId })
+    setDetail({
+      type: 'person',
+      id: /^\d+$/.test(personId) ? Number(personId) : personId,
+      previousId: prevId
+        ? (/^\d+$/.test(prevId) ? Number(prevId) : prevId)
+        : null,
+      nextId: nextId
+        ? (/^\d+$/.test(nextId) ? Number(nextId) : nextId)
+        : null,
+    })
   }
 }, [])
   const openPerson = (id) => setDetail({ type: 'person', id })
   const openLead = (id) => setDetail({ type: 'lead', id })
   const closeDetail = () => setDetail(null)
+
+const navigatePerson = (personId, previousId = null, nextId = null) => {
+  if (!personId) return
+
+  const url = new URL(window.location.href)
+
+  url.searchParams.set('person', personId)
+
+  if (previousId) {
+    url.searchParams.set('prev', previousId)
+  } else {
+    url.searchParams.delete('prev')
+  }
+
+  if (nextId) {
+    url.searchParams.set('next', nextId)
+  } else {
+    url.searchParams.delete('next')
+  }
+
+  window.location.href = url.toString()
+}
 
   const showToast = (message, error = false, onUndo = null) => setToast({ message, error, onUndo })
   useEffect(() => {
@@ -1061,11 +1110,14 @@ const fetchLeadEventMap = useCallback(async () => {
           {detail && detail.type === 'person' && (
             <PersonDetailPage
               personId={detail.id}
+              previousPersonId={detail.previousId}
+              nextPersonId={detail.nextId}
+              onNavigatePerson={navigatePerson}
               showToast={showToast}
               onOpenLead={openLead}
               onLeadCreated={addToLeadEventMap}
               onLeadRemoved={removeFromLeadEventMap}
-            />
+          />
           )}
           {detail && detail.type === 'lead' && (
             <LeadDetailPage leadId={detail.id} showToast={showToast} onOpenPerson={openPerson} />
@@ -2178,6 +2230,20 @@ showToast(
                 peoplePage
               ).map(p => {
 
+                const currentIndex = filtered.findIndex(
+  person => person.person_id === p.person_id
+)
+
+const previousPerson =
+  currentIndex > 0
+    ? filtered[currentIndex - 1]
+    : null
+
+const nextPerson =
+  currentIndex < filtered.length - 1
+    ? filtered[currentIndex + 1]
+    : null
+
                 const av = avatarStyle(
                   p.first_name +
                     p.last_name
@@ -2330,13 +2396,17 @@ return (
   <Fragment key={p.person_id}>
     <tr
       className="clickable"
-      onClick={() => {
-        if (selecting) {
-          togglePerson(p.person_id)
-        } else {
-          onOpenPerson(p.person_id)
-        }
-      }}
+     onClick={() => {
+  if (selecting) {
+    togglePerson(p.person_id)
+  } else {
+    openPersonInNewTab(
+      p.person_id,
+      previousPerson?.person_id,
+      nextPerson?.person_id
+    )
+  }
+}}
     >
       {selecting && (
         <td>
@@ -2359,7 +2429,11 @@ return (
                 // Opens in a NEW tab instead of navigating this one, so
                 // viewing someone's profile mid-selection never discards
                 // the batch you've already built up in the side panel.
-                openPersonInNewTab(p.person_id)
+                openPersonInNewTab(
+                    p.person_id,
+                    previousPerson?.person_id,
+                    nextPerson?.person_id
+                 )
               }}
               aria-label="View details"
               title="View details (opens in a new tab)"
@@ -3138,7 +3212,16 @@ function LeadsPage({ showToast, onOpenLead }) {
 // lists any leads already created from them, and offers a one-click
 // "Convert to lead" action that opens a fully-editable confirm modal.
 // ============================================================================
-function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLeadRemoved }) {
+function PersonDetailPage({
+  personId,
+  previousPersonId,
+  nextPersonId,
+  onNavigatePerson,
+  showToast,
+  onOpenLead,
+  onLeadCreated,
+  onLeadRemoved
+}) {
   const [person, setPerson] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -3203,6 +3286,18 @@ function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLe
   useEffect(() => { load(); loadLeads(); loadEvents() }, [load, loadLeads, loadEvents])
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+  const copyFullName = async () => {
+  const fullName = `${form.first_name || ''} ${form.last_name || ''}`.trim()
+
+  if (!fullName) return
+
+  try {
+    await navigator.clipboard.writeText(fullName)
+    showToast('Full name copied')
+  } catch {
+    showToast("Couldn't copy name", true)
+  }
+}
 const save = async () => {
   setSaving(true)
 
@@ -3266,18 +3361,97 @@ const save = async () => {
 
   return (
     <div className="crm-detail-wrap">
-      <div className="crm-detail-top">
-        <div className="crm-name-cell" style={{ fontSize: 15 }}>
-          <div className="crm-avatar" style={{ background: av.bg, color: av.fg, width: 40, height: 40, fontSize: 13 }}>{initials(form.first_name, form.last_name)}</div>
-          <div>
-            <div style={{ fontWeight: 600, color: 'var(--ink-950)', fontSize: 16 }}>{form.first_name} {form.last_name}</div>
-            <div style={{ fontSize: 12.5, color: 'var(--ink-400)' }}>{form.email}</div>
-          </div>
-        </div>
-        <button className="crm-submit-btn" style={{ width: 'auto', padding: '10px 18px' }} onClick={() => setShowConvert(true)}>
-          <UserPlus size={15} /> Convert to lead
+     <div className="crm-detail-top">
+  <div className="crm-name-cell" style={{ fontSize: 15 }}>
+    <div
+      className="crm-avatar"
+      style={{
+        background: av.bg,
+        color: av.fg,
+        width: 40,
+        height: 40,
+        fontSize: 13
+      }}
+    >
+      {initials(form.first_name, form.last_name)}
+    </div>
+
+    <div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 7,
+          fontWeight: 600,
+          color: 'var(--ink-950)',
+          fontSize: 16
+        }}
+      >
+        <span>
+          {form.first_name} {form.last_name}
+        </span>
+
+        <button
+          type="button"
+          className="crm-icon-action"
+          onClick={copyFullName}
+          title="Copy full name"
+          aria-label="Copy full name"
+        >
+          <Copy size={14} />
         </button>
       </div>
+
+      <div style={{ fontSize: 12.5, color: 'var(--ink-400)' }}>
+        {form.email}
+      </div>
+    </div>
+  </div>
+
+  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+    <button
+      type="button"
+      className="crm-icon-action"
+      onClick={() =>
+        onNavigatePerson(previousPersonId, null, nextPersonId)
+      }
+      disabled={!previousPersonId}
+      title="Previous person"
+      aria-label="Previous person"
+      style={{
+        opacity: previousPersonId ? 1 : 0.35,
+        cursor: previousPersonId ? 'pointer' : 'not-allowed'
+      }}
+    >
+      <ArrowLeft size={16} />
+    </button>
+
+    <button
+      type="button"
+      className="crm-icon-action"
+      onClick={() =>
+        onNavigatePerson(nextPersonId)
+      }
+      disabled={!nextPersonId}
+      title="Next person"
+      aria-label="Next person"
+      style={{
+        opacity: nextPersonId ? 1 : 0.35,
+        cursor: nextPersonId ? 'pointer' : 'not-allowed'
+      }}
+    >
+      <ArrowRight size={16} />
+    </button>
+
+    <button
+      className="crm-submit-btn"
+      style={{ width: 'auto', padding: '10px 18px' }}
+      onClick={() => setShowConvert(true)}
+    >
+      <UserPlus size={15} /> Convert to lead
+    </button>
+  </div>
+</div>
 
       <div className="crm-form" style={{ marginTop: 18 }}>
         <div className="crm-form-row">
