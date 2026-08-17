@@ -999,7 +999,6 @@ const fetchLeadEventMap = useCallback(async () => {
   // When set, a full-page detail view replaces the current page's content.
   const [detail, setDetail] = useState(null)
   useEffect(() => {
-useEffect(() => {
   const params = new URLSearchParams(window.location.search)
 
   const personId = params.get('person')
