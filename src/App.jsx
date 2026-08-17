@@ -753,6 +753,44 @@ function channelReadinessWarning(person, channelKey) {
   return null
 }
 
+async function resolveCompanyId(companyInput) {
+  if (!companyInput) return { companyId: null, error: null }
+
+  if (companyInput.company_id) {
+    const { error } = await supabase
+      .from('companies')
+      .update({
+        company_name: companyInput.company_name?.trim() || null,
+        country: companyInput.country?.trim() || null,
+      })
+      .eq('company_id', companyInput.company_id)
+    if (error) return { companyId: null, error }
+    return { companyId: companyInput.company_id, error: null }
+  }
+
+  const name = companyInput.company_name?.trim()
+  if (!name) return { companyId: null, error: null }
+
+  const { data: existing, error: lookupError } = await supabase
+    .from('companies')
+    .select('company_id')
+    .ilike('company_name', name)
+    .limit(1)
+    .maybeSingle()
+  if (lookupError) return { companyId: null, error: lookupError }
+
+  if (existing) {
+    return { companyId: existing.company_id, error: null }
+  }
+
+  const { data: created, error: createError } = await supabase
+    .from('companies')
+    .insert({ company_name: name, country: companyInput.country?.trim() || null })
+    .select('company_id')
+    .single()
+  if (createError) return { companyId: null, error: createError }
+  return { companyId: created.company_id, error: null }
+}
 // Small modal used for the "single-person, fully editable" convert-to-lead
 // flow from a person's detail page. Pre-filled with sane defaults; every
 // field stays editable before it writes anything. Channel selection is a
@@ -1481,57 +1519,12 @@ const saveLeadPurpose = async (personId) => {
 
  const saveEdit = async (personId) => {
   setSaving(true)
-  let companyId = editCompany?.company_id || null
 
-  if (
-    !companyId &&
-    editCompany?.company_name?.trim()
-  ) {
-    const name = editCompany.company_name.trim()
-    const {
-      data: existing,
-      error: lookupError,
-    } = await supabase
-      .from('companies')
-      .select('company_id')
-      .ilike('company_name', name)
-      .limit(1)
-      .maybeSingle()
-
-    if (lookupError) {
-      setSaving(false)
-      showToast(
-        `Couldn't check company: ${lookupError.message}`,
-        true
-      )
-      return
-    }
-
-    if (existing) {
-      companyId = existing.company_id
-    } else {
-      const {
-        data: created,
-        error: createError,
-      } = await supabase
-        .from('companies')
-        .insert({
-          company_name: name,
-          country: editCompany.country?.trim() || null, // ← added: country now persists for new companies
-        })
-        .select('company_id')
-        .single()
-
-      if (createError) {
-        setSaving(false)
-        showToast(
-          `Couldn't create company: ${createError.message}`,
-          true
-        )
-        return
-      }
-      companyId = created.company_id
-    }
+  const { companyId, error: companyError } = await resolveCompanyId(editCompany)
+  if (companyError) {
+    setSaving(false)
+    showToast(`Couldn't save company: ${companyError.message}`, true)
+    return
   }
 
   const { error } = await supabase
@@ -1548,10 +1541,7 @@ const saveLeadPurpose = async (personId) => {
   setSaving(false)
 
   if (error) {
-    showToast(
-      `Couldn't save: ${error.message}`,
-      true
-    )
+    showToast(`Couldn't save: ${error.message}`, true)
     return
   }
 
@@ -1563,10 +1553,7 @@ const saveLeadPurpose = async (personId) => {
             ...editForm,
             company_id: companyId,
             companies: editCompany
-              ? {
-                  company_name: editCompany.company_name,
-                  country: editCompany.country,
-                }
+              ? { company_name: editCompany.company_name, country: editCompany.country }
               : null,
           }
         : p
@@ -3174,46 +3161,31 @@ function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLe
   useEffect(() => { load(); loadLeads(); loadEvents() }, [load, loadLeads, loadEvents])
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+const save = async () => {
+  setSaving(true)
 
-  const save = async () => {
-    setSaving(true)
-    let companyId = company?.company_id || null
-    if (!companyId && company?.company_name?.trim()) {
-      const name = company.company_name.trim()
-      const { data: existing, error: lookupError } = await supabase
-        .from('companies')
-        .select('company_id')
-        .ilike('company_name', name)
-        .limit(1)
-        .maybeSingle()
-      if (lookupError) { setSaving(false); showToast(`Couldn't check company: ${lookupError.message}`, true); return }
-      if (existing) {
-        companyId = existing.company_id
-      } else {
-        const { data: created, error: createError } = await supabase
-          .from('companies')
-          .insert({ company_name: name, country: company.country?.trim() || null })
-          .select('company_id')
-          .single()
-        if (createError) { setSaving(false); showToast(`Couldn't create company: ${createError.message}`, true); return }
-        companyId = created.company_id
-      }
-    }
-    const { error } = await supabase
-      .from('people')
-      .update({
-        ...form,
-        email: form.email?.trim() || null,
-        email1: form.email1?.trim() || null,
-        company_id: companyId,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('person_id', personId)
+  const { companyId, error: companyError } = await resolveCompanyId(company)
+  if (companyError) {
     setSaving(false)
-    if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
-    showToast('Person updated')
-    load()
+    showToast(`Couldn't save company: ${companyError.message}`, true)
+    return
   }
+
+  const { error } = await supabase
+    .from('people')
+    .update({
+      ...form,
+      email: form.email?.trim() || null,
+      email1: form.email1?.trim() || null,
+      company_id: companyId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('person_id', personId)
+  setSaving(false)
+  if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
+  showToast('Person updated')
+  load()
+}
 
   const createLead = async (convertForm) => {
     setCreatingLead(true)
@@ -4206,42 +4178,23 @@ function PersonForm({ showToast }) {
   const [submitting, setSubmitting] = useState(false)
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
-  const submit = async (e) => {
+const submit = async (e) => {
   e.preventDefault()
   if (!form.first_name) return
   setSubmitting(true)
 
-  let companyId = company?.company_id || null
-
-  if (!companyId && company?.company_name?.trim()) {
-    const name = company.company_name.trim()
-    const { data: existing, error: lookupError } = await supabase
-      .from('companies')
-      .select('company_id')
-      .ilike('company_name', name)
-      .limit(1)
-      .maybeSingle()
-
-    if (lookupError) { setSubmitting(false); showToast(`Couldn't check company: ${lookupError.message}`, true); return }
-
-    if (existing) {
-      companyId = existing.company_id
-    } else {
-      const { data: created, error: createError } = await supabase
-        .from('companies')
-        .insert({ company_name: name, country: company.country?.trim() || null })
-        .select('company_id')
-        .single()
-      if (createError) { setSubmitting(false); showToast(`Couldn't create company: ${createError.message}`, true); return }
-      companyId = created.company_id
-    }
+  const { companyId, error: companyError } = await resolveCompanyId(company)
+  if (companyError) {
+    setSubmitting(false)
+    showToast(`Couldn't save company: ${companyError.message}`, true)
+    return
   }
 
   const { error } = await supabase.from('people').insert({
-  ...form,
-  email: form.email?.trim() || null,
-  company_id: companyId,
-})
+    ...form,
+    email: form.email?.trim() || null,
+    company_id: companyId,
+  })
   setSubmitting(false)
   if (error) { showToast(`Couldn't add person: ${error.message}`, true); return }
   setForm({ first_name: '', last_name: '', email: '', job_title: '', industry: '', country: '', phone: '', mobile: '', linkedin_url: '' })
