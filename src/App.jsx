@@ -4213,7 +4213,7 @@ function PersonForm({ showToast }) {
 
   const submit = async (e) => {
   e.preventDefault()
-  if (!form.first_name || !form.email) return
+  if (!form.first_name) return
   setSubmitting(true)
 
   let companyId = company?.company_id || null
@@ -4256,7 +4256,7 @@ function PersonForm({ showToast }) {
         <div><FieldLabel>First name</FieldLabel><input required value={form.first_name} onChange={set('first_name')} className="crm-input" /></div>
         <div><FieldLabel>Last name</FieldLabel><input value={form.last_name} onChange={set('last_name')} className="crm-input" /></div>
       </div>
-      <div><FieldLabel>Email</FieldLabel><input required type="email" value={form.email} onChange={set('email')} className="crm-input" /></div>
+      <div><FieldLabel>Email</FieldLabel><input  type="email" value={form.email} onChange={set('email')} className="crm-input" /></div>
       <div className="crm-form-row">
         <div><FieldLabel>Job title</FieldLabel><input value={form.job_title} onChange={set('job_title')} className="crm-input" /></div>
         <div>
