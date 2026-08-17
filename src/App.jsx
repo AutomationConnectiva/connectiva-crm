@@ -195,10 +195,9 @@ function CompanyPicker({ value, onChange }) {
   }, [])
 
   const q = query.trim().toLowerCase()
-  const matches = (q
+  const matches = q
     ? companies.filter(c => (c.company_name || '').toLowerCase().includes(q))
     : companies
-  ).slice(0, 8)
 
   const exactMatch = companies.find(c => (c.company_name || '').toLowerCase() === q)
 
