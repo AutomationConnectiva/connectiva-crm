@@ -2376,7 +2376,7 @@ return (
       <td>{p.companies?.company_name || '—'}</td>
       <td>{p.country || '—'}</td>
 
-      <td>
+       <td>
         {p.linkedin_url ? (
           
             href={externalUrl(p.linkedin_url)}
@@ -2389,7 +2389,7 @@ return (
         ) : (
           '—'
         )}
-      </td> 
+      </td>
 
       <td><Badge value={p.status} /></td>
 
