@@ -3212,7 +3212,13 @@ function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLe
     }
     const { error } = await supabase
       .from('people')
-      .update({ ...form, company_id: companyId, updated_at: new Date().toISOString() })
+      .update({
+        ...form,
+        email: form.email?.trim() || null,
+        email1: form.email1?.trim() || null,
+        company_id: companyId,
+        updated_at: new Date().toISOString(),
+      })
       .eq('person_id', personId)
     setSaving(false)
     if (error) { showToast(`Couldn't save: ${error.message}`, true); return }
@@ -4242,7 +4248,11 @@ function PersonForm({ showToast }) {
     }
   }
 
-  const { error } = await supabase.from('people').insert({ ...form, company_id: companyId })
+  const { error } = await supabase.from('people').insert({
+  ...form,
+  email: form.email?.trim() || null,
+  company_id: companyId,
+})
   setSubmitting(false)
   if (error) { showToast(`Couldn't add person: ${error.message}`, true); return }
   setForm({ first_name: '', last_name: '', email: '', job_title: '', industry: '', country: '', phone: '', mobile: '', linkedin_url: '' })
