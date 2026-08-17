@@ -183,17 +183,27 @@ function CompanyPicker({ value, onChange, showToast }) {
     setQuery(value?.company_name || '')
   }, [value?.company_id, value?.company_name])
 
-  useEffect(() => {
-    if (loaded) return
-    ;(async () => {
+useEffect(() => {
+  if (loaded) return
+  ;(async () => {
+    const PAGE = 1000
+    let allRows = []
+    let from = 0
+    while (true) {
       const { data, error } = await supabase
         .from('companies')
         .select('company_id, company_name, country')
         .order('company_name', { ascending: true })
-      if (!error) setCompanies(data || [])
-      setLoaded(true)
-    })()
-  }, [loaded])
+        .range(from, from + PAGE - 1)
+      if (error) break
+      allRows = allRows.concat(data || [])
+      if (!data || data.length < PAGE) break
+      from += PAGE
+    }
+    setCompanies(allRows)
+    setLoaded(true)
+  })()
+}, [loaded])
 
   // Recompute the dropdown's screen position (viewport-relative, since we
   // use position:fixed) any time it opens, and keep it in sync on scroll —
