@@ -1394,10 +1394,12 @@ function PeoplePage({
       }
     }
 
-    const { error } = await supabase
+   const { error } = await supabase
       .from('people')
       .update({
         ...editForm,
+        email: editForm.email?.trim() || null,
+        email1: editForm.email1?.trim() || null,
         company_id: companyId,
         updated_at: new Date().toISOString(),
       })
