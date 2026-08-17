@@ -162,11 +162,12 @@ function FieldLabel({ children }) {
 // exists in the DB attaches to the SAME row instead of risking a near-dupe.
 // A new company is only ever created when nothing in the list matches at all,
 // and even then only on save (see saveEdit/save's ilike-then-insert fallback).
-function CompanyPicker({ value, onChange }) {
+function CompanyPicker({ value, onChange, showToast }) {
   const [query, setQuery] = useState(value?.company_name || '')
   const [companies, setCompanies] = useState([])
   const [loaded, setLoaded] = useState(false)
   const [open, setOpen] = useState(false)
+  const [showEdit, setShowEdit] = useState(false)
   const wrapRef = useRef(null)
 
   // Keep the input in sync if the parent resets `value` (e.g. cancelEdit).
@@ -179,7 +180,7 @@ function CompanyPicker({ value, onChange }) {
     ;(async () => {
       const { data, error } = await supabase
         .from('companies')
-        .select('company_id, company_name')
+        .select('company_id, company_name, country')
         .order('company_name', { ascending: true })
       if (!error) setCompanies(data || [])
       setLoaded(true)
@@ -201,9 +202,16 @@ function CompanyPicker({ value, onChange }) {
 
   const exactMatch = companies.find(c => (c.company_name || '').toLowerCase() === q)
 
+  // True once the typed text has resolved to a real, existing company row —
+  // this is when we show the "edit" pencil instead of a country input.
+  const isExistingCompany = !!value?.company_id
+  // True while the typed text hasn't matched anything yet — this is when
+  // we're on track to INSERT a new company row on save, so we ask for country now.
+  const isNewCompany = q.length > 0 && !isExistingCompany
+
   const selectCompany = (c) => {
     setQuery(c.company_name)
-    onChange({ company_id: c.company_id, company_name: c.company_name })
+    onChange({ company_id: c.company_id, company_name: c.company_name, country: c.country || '' })
     setOpen(false)
   }
 
@@ -212,18 +220,64 @@ function CompanyPicker({ value, onChange }) {
     setQuery(v)
     setOpen(true)
     const exact = companies.find(c => (c.company_name || '').toLowerCase() === v.trim().toLowerCase())
-    onChange(v.trim() ? { company_id: exact ? exact.company_id : null, company_name: v } : null)
+    if (!v.trim()) {
+      onChange(null)
+      return
+    }
+    onChange(
+      exact
+        ? { company_id: exact.company_id, company_name: v, country: exact.country || '' }
+        // Preserve whatever country was already typed for a not-yet-matched
+        // new company, instead of wiping it out on every keystroke.
+        : { company_id: null, company_name: v, country: value?.country || '' }
+    )
+  }
+
+  const handleCountryChange = (e) => {
+    onChange({ company_id: value?.company_id || null, company_name: query, country: e.target.value })
+  }
+
+  const handleCompanySaved = (updated) => {
+    // Reflect the rename/country edit immediately in this picker + local list.
+    setQuery(updated.company_name)
+    onChange(updated)
+    setCompanies(prev => prev.map(c => (c.company_id === updated.company_id ? { ...c, ...updated } : c)))
   }
 
   return (
     <div ref={wrapRef} className="crm-company-picker">
-      <input
-        className="crm-input"
-        value={query}
-        placeholder="Company name"
-        onChange={handleChange}
-        onFocus={() => setOpen(true)}
-      />
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input
+          className="crm-input"
+          value={query}
+          placeholder="Company name"
+          onChange={handleChange}
+          onFocus={() => setOpen(true)}
+          style={{ flex: 1 }}
+        />
+        {isExistingCompany && (
+          <button
+            type="button"
+            className="crm-icon-action"
+            onClick={() => setShowEdit(true)}
+            title="Edit this company"
+            aria-label="Edit this company"
+          >
+            <Pencil size={14} />
+          </button>
+        )}
+      </div>
+
+      {isNewCompany && (
+        <input
+          className="crm-input"
+          style={{ marginTop: 6 }}
+          value={value?.country || ''}
+          onChange={handleCountryChange}
+          placeholder="Country (new company)"
+        />
+      )}
+
       {open && (matches.length > 0 || (q && !exactMatch)) && (
         <div className="crm-company-dropdown">
           {matches.map(c => {
@@ -234,7 +288,7 @@ function CompanyPicker({ value, onChange }) {
                 className={`crm-company-dropdown-item${isExact ? ' exact' : ''}`}
                 onMouseDown={() => selectCompany(c)}
               >
-                {c.company_name}
+                {c.company_name}{c.country ? ` — ${c.country}` : ''}
               </div>
             )
           })}
@@ -248,29 +302,76 @@ function CompanyPicker({ value, onChange }) {
           )}
         </div>
       )}
+
+      {showEdit && isExistingCompany && (
+        <CompanyEditModal
+          company={{ company_id: value.company_id, company_name: value.company_name, country: value.country }}
+          onClose={() => setShowEdit(false)}
+          onSaved={handleCompanySaved}
+          showToast={showToast}
+        />
+      )}
     </div>
   )
 }
 
-function CreatePage({ showToast }) {
-  const [tab, setTab] = useState('person')
+// ----------------------------------------------------------------------------
+// Edit an EXISTING company row directly — since companies is its own table
+// linked by company_id FK, this updates the shared row once and every person
+// pointing at that company_id reflects it immediately. No cascade needed.
+// ----------------------------------------------------------------------------
+function CompanyEditModal({ company, onClose, onSaved, showToast }) {
+  const [name, setName] = useState(company.company_name || '')
+  const [country, setCountry] = useState(company.country || '')
+  const [saving, setSaving] = useState(false)
+
+  const save = async () => {
+    if (!name.trim()) return
+    setSaving(true)
+    const { error } = await supabase
+      .from('companies')
+      .update({ company_name: name.trim(), country: country.trim() || null })
+      .eq('company_id', company.company_id)
+    setSaving(false)
+    if (error) {
+      showToast && showToast(`Couldn't update company: ${error.message}`, true)
+      return
+    }
+    showToast && showToast("Company updated — reflected everywhere it's linked")
+    onSaved({ company_id: company.company_id, company_name: name.trim(), country: country.trim() })
+    onClose()
+  }
+
   return (
-    <div className="crm-create-wrap">
-      <div className="crm-tabs">
-        <button
-          className={`crm-tab-btn${tab === 'person' ? ' active' : ''}`}
-          onClick={() => setTab('person')}
-        >
-          Person
-        </button>
-        <button
-          className={`crm-tab-btn${tab === 'event' ? ' active' : ''}`}
-          onClick={() => setTab('event')}
-        >
-          Event
-        </button>
+    <div className="crm-modal-overlay">
+      <div className="crm-modal-backdrop" onClick={onClose} />
+      <div className="crm-modal-card" style={{ maxWidth: 400 }}>
+        <h4 className="crm-confirm-heading">Edit company</h4>
+        <p className="crm-confirm-note">
+          Updates the shared record — every person linked to this company reflects it immediately.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <FieldLabel>Company name</FieldLabel>
+            <input className="crm-input" value={name} onChange={e => setName(e.target.value)} />
+          </div>
+          <div>
+            <FieldLabel>Country</FieldLabel>
+            <input className="crm-input" value={country} onChange={e => setCountry(e.target.value)} />
+          </div>
+        </div>
+        <div className="crm-confirm-actions" style={{ marginTop: 18 }}>
+          <button className="crm-btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
+          <button
+            className="crm-submit-btn"
+            style={{ width: 'auto', padding: '10px 20px' }}
+            onClick={save}
+            disabled={saving || !name.trim()}
+          >
+            {saving ? <Loader2 size={15} className="crm-spin" /> : <Save size={15} />} Save
+          </button>
+        </div>
       </div>
-      {tab === 'person' ? <PersonForm showToast={showToast} /> : <EventForm showToast={showToast} />}
     </div>
   )
 }
