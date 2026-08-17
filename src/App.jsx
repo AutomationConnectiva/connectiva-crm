@@ -501,21 +501,26 @@ const CSS = `
   .crm-avatar { width: 32px; height: 32px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; flex-shrink: 0; }
 
   .crm-company-picker { position: relative; }
-  .crm-company-dropdown {
+ .crm-company-dropdown {
   position: fixed; z-index: 999;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.12); max-height: 220px; overflow-y: auto;
+  background: var(--surface, #FFFFFF);
+  border: 1px solid var(--line, #E7E4DD);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  max-height: 220px; overflow-y: auto;
 }
   .crm-company-dropdown-item {
-  padding: 9px 14px; font-size: 13.5px; color: var(--ink-900); cursor: pointer;
+  padding: 9px 14px; font-size: 13.5px;
+  color: var(--ink-900, #1D2027); cursor: pointer;
 }
-  .crm-company-dropdown-item:hover { background: var(--paper); }
-  .crm-company-dropdown-item.exact { color: var(--accent-ink); font-weight: 500; }
-  .crm-company-dropdown-create {
-  padding: 9px 14px; font-size: 13px; color: var(--accent-ink); cursor: pointer;
-  border-top: 1px solid var(--line); font-weight: 500;
+ .crm-company-dropdown-item:hover { background: var(--paper, #F6F5F1); }
+.crm-company-dropdown-item.exact { color: var(--accent-ink, #0B5647); font-weight: 500; }
+.crm-company-dropdown-create {
+  padding: 9px 14px; font-size: 13px;
+  color: var(--accent-ink, #0B5647); cursor: pointer;
+  border-top: 1px solid var(--line, #E7E4DD); font-weight: 500;
 }
- .crm-company-dropdown-create:hover { background: var(--accent-soft); }
+.crm-company-dropdown-create:hover { background: var(--accent-soft, #E3EFEA); }
 
   .crm-cell-input { width: 100%; min-width: 90px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); font-size: 13px; font-family: inherit; outline: none; }
   .crm-cell-input:focus { border-color: var(--accent); }
