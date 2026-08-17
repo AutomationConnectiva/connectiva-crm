@@ -2379,7 +2379,7 @@ return (
        <td>
         {p.linkedin_url ? (
           
-            href={externalUrl(p.linkedin_url)}
+            <a href={externalUrl(p.linkedin_url)}
             target="_blank"
             rel="noreferrer"
             onClick={e => e.stopPropagation()}
