@@ -3175,6 +3175,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLe
           <div><FieldLabel>Last name</FieldLabel><input className="crm-input" value={form.last_name} onChange={set('last_name')} /></div>
         </div>
         <div><FieldLabel>Email</FieldLabel><input className="crm-input" value={form.email} onChange={set('email')} /></div>
+        <div><FieldLabel>Email 1</FieldLabel><input className="crm-input" value={form.email1} onChange={set('email1')} /></div>
         <div className="crm-form-row">
           <div><FieldLabel>Job title</FieldLabel><input className="crm-input" value={form.job_title} onChange={set('job_title')} /></div>
           <div>
