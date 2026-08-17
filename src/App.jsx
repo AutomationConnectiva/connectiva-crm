@@ -877,6 +877,7 @@ function PeoplePage({
   const [columnFilters, setColumnFilters] = useState({
     name: '',
     email: '',
+    email1: '',
     job_title: '',
     industry: '',
     company: '',
@@ -1099,6 +1100,7 @@ function PeoplePage({
 
     const name = f.name.toLowerCase().trim()
     const email = f.email.toLowerCase().trim()
+    const email1 = f.email1.toLowerCase().trim()
     const jt = f.job_title.toLowerCase().trim()
     const company = f.company.toLowerCase().trim()
     const country = f.country.toLowerCase().trim()
@@ -1130,6 +1132,15 @@ function PeoplePage({
         return false
       }
 
+      if (
+        email1 &&
+         !(p.email1 || '')
+          .toLowerCase()
+          .includes(email1)
+     ) {
+        return false
+     } 
+      
       if (
         jt &&
         !(p.job_title || '')
@@ -1202,6 +1213,7 @@ function PeoplePage({
       first_name: p.first_name || '',
       last_name: p.last_name || '',
       email: p.email || '',
+      email1: p.email1 || '',
       job_title: p.job_title || '',
       country: p.country || '',
       status: p.status || '',
@@ -1658,7 +1670,7 @@ function PeoplePage({
   const selecting = mode === 'select'
 
   const COLUMN_COUNT =
-    selecting ? 11 : 10
+    selecting ? 12 : 11
 
   // ============================================================
   // TABLE
@@ -1790,6 +1802,7 @@ function PeoplePage({
 
                 <th>Name</th>
                 <th>Email</th>
+                <th>Email 1</th>
                 <th>Job title</th>
                 <th>Industry</th>
                 <th>Company</th>
@@ -1821,6 +1834,14 @@ function PeoplePage({
                     onChange={setColFilter('email')}
                     placeholder="Filter…"
                   />
+                </th>
+                <th>
+               <input 
+                   className="crm-cell-input" 
+                   value={columnFilters.email1} 
+                   onChange={setColFilter('email1')} 
+                   placeholder="Filter…" 
+                 />
                 </th>
 
                 <th>
@@ -2001,6 +2022,15 @@ function PeoplePage({
                           }
                         />
                       </td>
+                      <td>
+                       <input
+                        className="crm-cell-input"
+                        value={editForm.email1
+                        }
+                        onChange={e => 
+                          setEditForm({ ...editForm, email1: e.target.value })}
+                           />
+                       </td>
 
                       <td>
                         <input
@@ -2275,8 +2305,9 @@ function PeoplePage({
                     </td>
 
                     <td>{p.email}</td>
-                    <td>{p.job_title || '—'}</td>
-                    <td>{p.industry || '—'}</td>
+                    <td>{p.email1 || '-'}</td>
+                    <td>{p.job_title || '-'}</td>
+                    <td>{p.industry || '-'}</td>
                     <td>
                       {p.companies?.company_name ||
                         '—'}
@@ -3018,7 +3049,7 @@ function PersonDetailPage({ personId, showToast, onOpenLead, onLeadCreated, onLe
     else {
       setPerson(data)
       setForm({
-        first_name: data.first_name || '', last_name: data.last_name || '', email: data.email || '',
+        first_name: data.first_name || '', last_name: data.last_name || '', email: data.email || '', email1: data.email1 || '',
         job_title: data.job_title || '', country: data.country || '', phone: data.phone || '',
         mobile: data.mobile || '', linkedin_url: data.linkedin_url || '', status: data.status || '',
         industry: data.industry || '', lead_purpose: data.lead_purpose || '', owner_email: data.owner_email || '',
