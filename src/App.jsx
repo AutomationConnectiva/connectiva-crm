@@ -4552,3 +4552,37 @@ function EventForm({ showToast }) {
     </form>
   )
 }
+
+// ============================================================================
+// CREATE — tabbed entry point wrapping PersonForm and EventForm. This was
+// referenced from App's activePage switch but never actually defined, which
+// is why the Create nav item rendered a blank page.
+// ============================================================================
+function CreatePage({ showToast }) {
+  const [tab, setTab] = useState('person') // 'person' | 'event'
+
+  return (
+    <div className="crm-create-wrap">
+      <div className="crm-tabs">
+        <button
+          type="button"
+          className={`crm-tab-btn${tab === 'person' ? ' active' : ''}`}
+          onClick={() => setTab('person')}
+        >
+          <UserPlus size={14} style={{ marginRight: 6, verticalAlign: -2 }} />
+          Person
+        </button>
+        <button
+          type="button"
+          className={`crm-tab-btn${tab === 'event' ? ' active' : ''}`}
+          onClick={() => setTab('event')}
+        >
+          <Calendar size={14} style={{ marginRight: 6, verticalAlign: -2 }} />
+          Event
+        </button>
+      </div>
+
+      {tab === 'person' ? <PersonForm showToast={showToast} /> : <EventForm showToast={showToast} />}
+    </div>
+  )
+}
