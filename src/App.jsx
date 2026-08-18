@@ -97,32 +97,49 @@ function formatDateTime(d) {
   return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-// Normalizes a stored URL (e.g. LinkedIn) so it's always used as an ABSOLUTE
-// external link. Without this, a value like "linkedin.com/in/johndoe" (no
-// protocol) gets treated by the browser as a RELATIVE path on your own app's
-// domain when used directly as an <a href>, which is why clicking it looked
-// like it "redirected once then reopened the app" — it was just React Router
-// (or a full page load) navigating within connectiva-crm itself instead of
-const PERSON_NAV_STORAGE_KEY = 'crm_person_nav_ids'
+// ---------------------------------------------------------------------------
+// Person Prev/Next navigation — the filtered id list from PeoplePage is
+// written to localStorage under a one-off random key ("navKey"), and that
+// key travels with the URL (?navKey=...) when a person is opened in a new
+// tab. sessionStorage was tried first, but browsers only copy sessionStorage
+// into a script-opened tab when it keeps a same-origin opener relationship —
+// window.open with 'noopener'/'noreferrer' (needed to stop the new tab
+// redirecting the original one) breaks that inheritance, so the new tab saw
+// an empty list and silently fell back to an unfiltered rebuild. That's why
+// Next used to walk through everyone instead of just, say, Delegate
+// Acquisition. localStorage + a URL-carried key sidesteps that entirely.
+// ---------------------------------------------------------------------------
+const NAV_MANIFEST_KEY = 'crm_person_nav_manifest'
 
-// sessionStorage (not localStorage) — each tab gets its own isolated copy,
-// cloned at the moment window.open() fires. This is what stops a second
-// tab's background People-page mount from clobbering the filtered order
-// you actually clicked through in the first tab.
-function savePersonNavList(ids) {
+function generateNavKey() {
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function savePersonNavList(navKey, ids) {
   try {
-    sessionStorage.setItem(PERSON_NAV_STORAGE_KEY, JSON.stringify(ids))
+    localStorage.setItem(`crm_person_nav_${navKey}`, JSON.stringify(ids))
+    // Keep only the most recent 20 saved lists so localStorage doesn't grow
+    // without bound across a long session of opening people in tabs.
+    const manifest = JSON.parse(localStorage.getItem(NAV_MANIFEST_KEY) || '[]')
+    manifest.push(navKey)
+    while (manifest.length > 20) {
+      const stale = manifest.shift()
+      localStorage.removeItem(`crm_person_nav_${stale}`)
+    }
+    localStorage.setItem(NAV_MANIFEST_KEY, JSON.stringify(manifest))
   } catch {
-    // sessionStorage unavailable — Prev/Next will just be disabled
+    // localStorage unavailable — Prev/Next will just be disabled
   }
 }
 
-function getPersonNavNeighbors(personId) {
+function getPersonNavNeighbors(navKey, personId) {
   let ids = []
-  try {
-    ids = JSON.parse(sessionStorage.getItem(PERSON_NAV_STORAGE_KEY) || '[]')
-  } catch {
-    ids = []
+  if (navKey) {
+    try {
+      ids = JSON.parse(localStorage.getItem(`crm_person_nav_${navKey}`) || '[]')
+    } catch {
+      ids = []
+    }
   }
   const idx = ids.findIndex(id => String(id) === String(personId))
   if (idx === -1) return { previousId: null, nextId: null }
@@ -133,15 +150,22 @@ function getPersonNavNeighbors(personId) {
 }
 
 // navIds (optional): the exact ordered list of ids currently on screen
-// (i.e. PeoplePage's `filtered`) — saved right before opening the new tab,
-// so the new tab's Prev/Next always matches what you were actually looking
-// at, filters and all.
+// (i.e. PeoplePage's `filtered`) — saved under a fresh navKey right before
+// opening the new tab, with that key appended to the URL, so the new tab's
+// Prev/Next always matches what you were actually looking at, including
+// the lead purpose filter.
 function openPersonInNewTab(personId, navIds) {
-  if (navIds) savePersonNavList(navIds)
   const url = new URL(window.location.href)
   url.searchParams.set('person', personId)
   url.searchParams.delete('prev')
   url.searchParams.delete('next')
+  if (navIds) {
+    const navKey = generateNavKey()
+    savePersonNavList(navKey, navIds)
+    url.searchParams.set('navKey', navKey)
+  } else {
+    url.searchParams.delete('navKey')
+  }
   window.open(url.toString(), '_blank', 'noopener,noreferrer')
 }
 
@@ -165,9 +189,7 @@ async function buildPersonNavListFromDB() {
   const { data: leadRows } = await supabase.from('leads').select('person_id')
   const leadIds = new Set((leadRows || []).map(r => r.person_id))
 
-  const ids = allRows.map(r => r.person_id).filter(id => !leadIds.has(id))
-  savePersonNavList(ids)
-  return ids
+  return allRows.map(r => r.person_id).filter(id => !leadIds.has(id))
 }
 
 function externalUrl(u) {
@@ -716,6 +738,15 @@ const CSS = `
   .crm-event-picker-card-icon { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent-ink); flex-shrink: 0; }
   .crm-event-picker-card-name { font-size: 14.5px; font-weight: 600; color: var(--ink-950); line-height: 1.3; }
   .crm-event-picker-card-date { font-size: 12px; color: var(--ink-400); display: flex; align-items: center; }
+
+  /* ---------- Notes column truncation (People / Leads tables) ---------- */
+  .crm-notes-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+
+  /* ---------- Company / Country sort toggles (People page) ---------- */
+  .crm-sort-btns { display: flex; flex-direction: column; gap: 1px; flex-shrink: 0; }
+  .crm-sort-btn { border: none; background: transparent; padding: 0; margin: 0; line-height: 0; color: var(--ink-400); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .crm-sort-btn:hover { color: var(--ink-700); }
+  .crm-sort-btn.active { color: var(--accent-ink); }
 `
 
 // ---------------------------------------------------------------------------
@@ -1059,14 +1090,16 @@ const fetchLeadEventMap = useCallback(async () => {
   // detail = null | { type: 'person' | 'lead', id }
   // When set, a full-page detail view replaces the current page's content.
   const [detail, setDetail] = useState(null)
- useEffect(() => {
+useEffect(() => {
   const params = new URLSearchParams(window.location.search)
   const personId = params.get('person')
+  const navKey = params.get('navKey')
 
   if (personId) {
     setDetail({
       type: 'person',
       id: /^\d+$/.test(personId) ? Number(personId) : personId,
+      navKey: navKey || null,
     })
   }
 }, [])
@@ -1149,6 +1182,7 @@ const navigatePerson = (personId) => {
           {detail && detail.type === 'person' && (
            <PersonDetailPage
               personId={detail.id}
+              navKey={detail.navKey}
               onNavigatePerson={navigatePerson}
               showToast={showToast}
               onOpenLead={openLead}
@@ -1217,6 +1251,36 @@ function SidebarContent({ collapsed, setCollapsed, activePage, goTo, onCloseMobi
   )
 }
 
+// Small up/down sort toggle next to the Company and Country filter inputs
+// on the People table. Clicking the currently-active arrow again clears
+// the sort back to the default (created_at) order.
+function SortButtons({ columnKey, sortConfig, onSort }) {
+  const isAsc = sortConfig.column === columnKey && sortConfig.direction === 'asc'
+  const isDesc = sortConfig.column === columnKey && sortConfig.direction === 'desc'
+  return (
+    <div className="crm-sort-btns">
+      <button
+        type="button"
+        className={`crm-sort-btn${isAsc ? ' active' : ''}`}
+        onClick={() => onSort(columnKey, 'asc')}
+        aria-label={`Sort ${columnKey} ascending`}
+        title="Sort A→Z"
+      >
+        <ChevronUp size={12} />
+      </button>
+      <button
+        type="button"
+        className={`crm-sort-btn${isDesc ? ' active' : ''}`}
+        onClick={() => onSort(columnKey, 'desc')}
+        aria-label={`Sort ${columnKey} descending`}
+        title="Sort Z→A"
+      >
+        <ChevronDown size={12} />
+      </button>
+    </div>
+  )
+}
+
 // ============================================================================
 // PEOPLE — live data, search, pagination. Display-only by default:
 //  - clicking a row opens the full Person detail page
@@ -1276,6 +1340,16 @@ function PeoplePage({
       [key]: e.target.value,
     }))
 
+  // Sort state for the Company/Country columns only. Clicking the active
+  // arrow a second time clears the sort back to the default order.
+  const [sortConfig, setSortConfig] = useState({ column: null, direction: 'asc' })
+  const toggleSort = (columnKey, direction) => {
+    setSortConfig(prev =>
+      prev.column === columnKey && prev.direction === direction
+        ? { column: null, direction: 'asc' }
+        : { column: columnKey, direction }
+    )
+  }
   const [events, setEvents] = useState([])
   const [eventsLoading, setEventsLoading] = useState(true)
   const [linkEventId, setLinkEventId] = useState('')
@@ -1515,7 +1589,7 @@ const saveLeadPurpose = async (personId) => {
     const company = f.company.toLowerCase().trim()
     const country = f.country.toLowerCase().trim()
 
-    return people.filter(p => {
+    const result = people.filter(p => {
 
       // 🚫 ANY lead = NOT a People record anymore
       if (leadPersonIds.has(p.person_id)) {
@@ -1599,18 +1673,37 @@ const saveLeadPurpose = async (personId) => {
         return false
       }
 
-      return true
+   return true
     })
+
+    if (sortConfig.column) {
+      const dir = sortConfig.direction === 'asc' ? 1 : -1
+      const getSortValue = (p) => {
+        if (sortConfig.column === 'company') return (p.companies?.company_name || '').toLowerCase()
+        if (sortConfig.column === 'country') return (p.country || '').toLowerCase()
+        return ''
+      }
+      result.sort((a, b) => {
+        const av = getSortValue(a)
+        const bv = getSortValue(b)
+        if (av < bv) return -1 * dir
+        if (av > bv) return 1 * dir
+        return 0
+      })
+    }
+
+    return result
   }, [
     people,
     columnFilters,
     leadPurposeFilter,
     leadPersonIds,
+    sortConfig,
   ])
 
   useEffect(() => {
     setPeoplePage(1)
-  }, [columnFilters, leadPurposeFilter])
+  }, [columnFilters, leadPurposeFilter, sortConfig])
 
   // ============================================================
   // EDIT PERSON
@@ -2010,7 +2103,7 @@ showToast(
   const selecting = mode === 'select'
 
   const COLUMN_COUNT =
-    selecting ? 12 : 11
+    selecting ? 13 : 12
 
   // ============================================================
   // TABLE
@@ -2144,6 +2237,7 @@ showToast(
                 <th>Email</th>
                 <th>Email 1</th>
                 <th>Job title</th>
+                <th>Notes</th>
                 <th>Industry</th>
                 <th>Company</th>
                 <th>Country</th>
@@ -2184,7 +2278,7 @@ showToast(
                  />
                 </th>
 
-                <th>
+               <th>
                   <input
                     className="crm-cell-input"
                     value={columnFilters.job_title}
@@ -2192,6 +2286,15 @@ showToast(
                     placeholder="Filter…"
                   />
                 </th>
+
+                <th />
+
+                <th>
+                  <select
+                    className="crm-cell-select"
+                    value={columnFilters.industry}
+                    onChange={setColFilter('industry')}
+                  >
 
                 <th>
                   <select
@@ -2215,21 +2318,27 @@ showToast(
                 </th>
 
                 <th>
-                  <input
-                    className="crm-cell-input"
-                    value={columnFilters.company}
-                    onChange={setColFilter('company')}
-                    placeholder="Filter…"
-                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input
+                      className="crm-cell-input"
+                      value={columnFilters.company}
+                      onChange={setColFilter('company')}
+                      placeholder="Filter…"
+                    />
+                    <SortButtons columnKey="company" sortConfig={sortConfig} onSort={toggleSort} />
+                  </div>
                 </th>
 
                 <th>
-                  <input
-                    className="crm-cell-input"
-                    value={columnFilters.country}
-                    onChange={setColFilter('country')}
-                    placeholder="Filter…"
-                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input
+                      className="crm-cell-input"
+                      value={columnFilters.country}
+                      onChange={setColFilter('country')}
+                      placeholder="Filter…"
+                    />
+                    <SortButtons columnKey="country" sortConfig={sortConfig} onSort={toggleSort} />
+                  </div>
                 </th>
 
                 <th />
@@ -2336,6 +2445,15 @@ if (isEditing) {
           className="crm-cell-input"
           value={editForm.job_title}
           onChange={e => setEditForm({ ...editForm, job_title: e.target.value })}
+        />
+      </td>
+
+      <td>
+        <input
+          className="crm-cell-input"
+          value={editForm.notes}
+          onChange={e => setEditForm({ ...editForm, notes: e.target.value })}
+          placeholder="Notes"
         />
       </td>
 
@@ -2487,9 +2605,10 @@ return (
         </div>
       </td>
 
-      <td>{p.email}</td>
+       <td>{p.email}</td>
       <td>{p.email1 || '-'}</td>
       <td>{p.job_title || '-'}</td>
+      <td className="crm-notes-cell" title={p.notes || ''}>{p.notes || '—'}</td>
       <td>{p.industry || '-'}</td>
       <td>{p.companies?.company_name || '—'}</td>
       <td>{p.country || '—'}</td>
@@ -2590,10 +2709,8 @@ return (
 })}
 
 {filtered.length === 0 && (
-  <tr className="crm-empty-row">
-    <td colSpan={COLUMN_COUNT}>No one matches that search.</td>
-  </tr>
-)}
+                <tr className="crm-empty-row"><td colSpan={10}>No leads match these filters.</td></tr>
+              )}
 </tbody>
 </table>
 
@@ -3144,8 +3261,8 @@ if (!selectedEventId) {
         <div className="crm-table-wrap">
           <table className="crm-table">
             <thead>
-              <tr>
-                {['Person', 'Purpose', 'Status', 'Nurture', 'Owner', 'Cold calling', 'Email', 'Social', ''].map(h => (
+             <tr>
+                {['Person', 'Purpose', 'Status', 'Nurture', 'Notes', 'Owner', 'Cold calling', 'Email', 'Social', ''].map(h => (
                   <th key={h}>{h}</th>
                 ))}
               </tr>
@@ -3156,10 +3273,11 @@ if (!selectedEventId) {
                 const isConverting = convertingLeadId === l.lead_id
                 return (
                   <tr key={l.lead_id} className="clickable" onClick={() => onOpenLead(l.lead_id)}>
-                    <td style={{ fontWeight: 500, color: 'var(--ink-950)' }}>{personName}</td>
+                  <td style={{ fontWeight: 500, color: 'var(--ink-950)' }}>{personName}</td>
                     <td>{l.lead_purpose || '—'}</td>
                     <td><Badge value={l.lead_status} /></td>
                     <td><Badge value={l.nurture_stage} /></td>
+                    <td className="crm-notes-cell" title={l.notes || ''}>{l.notes || '—'}</td>
                     <td>{l.people?.owner_email || '—'}</td>
                     <td>
                       {l.cold_calling ? (
@@ -3224,6 +3342,7 @@ if (!selectedEventId) {
 // ============================================================================
 function PersonDetailPage({
   personId,
+  navKey,
   onNavigatePerson,
   showToast,
   onOpenLead,
@@ -3233,13 +3352,14 @@ function PersonDetailPage({
 const [neighbors, setNeighbors] = useState({ previousId: null, nextId: null })
   useEffect(() => {
     let cancelled = false
-    const result = getPersonNavNeighbors(personId)
+    const result = getPersonNavNeighbors(navKey, personId)
     if (result.previousId || result.nextId) {
       setNeighbors(result)
       return
     }
-    // Nav list is empty/stale (e.g. person was opened from outside the
-    // People page) — rebuild it fresh from Supabase as a fallback.
+    // No navKey, or this person isn't in that saved list (e.g. opened from
+    // outside the People page) — rebuild an unfiltered list from Supabase
+    // as a fallback so Prev/Next still work, just without any filters.
     ;(async () => {
       const ids = await buildPersonNavListFromDB()
       if (cancelled) return
@@ -3251,7 +3371,7 @@ const [neighbors, setNeighbors] = useState({ previousId: null, nextId: null })
       })
     })()
     return () => { cancelled = true }
-  }, [personId])
+  }, [personId, navKey])
 
   const [person, setPerson] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -3294,11 +3414,12 @@ const [neighbors, setNeighbors] = useState({ previousId: null, nextId: null })
     if (error) setError(error.message)
     else {
       setPerson(data)
-      setForm({
+   setForm({
         first_name: data.first_name || '', last_name: data.last_name || '', email: data.email || '', email1: data.email1 || '',
         job_title: data.job_title || '', country: data.country || '', phone: data.phone || '',
         mobile: data.mobile || '', linkedin_url: data.linkedin_url || '', status: data.status || '',
         industry: data.industry || '', lead_purpose: data.lead_purpose || '', owner_email: data.owner_email || '',
+        notes: data.notes || '',
       })
       setCompany(data.companies ? { company_id: data.companies.company_id, company_name: data.companies.company_name, country: data.companies.country || '' } : null)
     }
@@ -3532,11 +3653,7 @@ const save = async () => {
             </select>
           </div>
         </div>
-        <div className="crm-form-row">
-          <div><FieldLabel>Phone</FieldLabel><input className="crm-input" value={form.phone} onChange={set('phone')} /></div>
-          <div><FieldLabel>Mobile</FieldLabel><input className="crm-input" value={form.mobile} onChange={set('mobile')} /></div>
-        </div>
-        <div className="crm-form-row">
+       <div className="crm-form-row">
           <div><FieldLabel>LinkedIn URL</FieldLabel><input className="crm-input" value={form.linkedin_url} onChange={set('linkedin_url')} /></div>
           <div>
             <FieldLabel>Status</FieldLabel>
@@ -3549,11 +3666,11 @@ const save = async () => {
             </select>
           </div>
         </div>
+        <div><FieldLabel>Notes</FieldLabel><textarea className="crm-textarea" value={form.notes} onChange={set('notes')} /></div>
         <button className="crm-submit-btn" onClick={save} disabled={saving}>
           {saving ? <Loader2 size={15} className="crm-spin" /> : <Save size={15} />} Save changes
         </button>
       </div>
-
       <div style={{ marginTop: 28 }}>
         <h3 className="crm-display" style={{ fontSize: 17, margin: '0 0 12px' }}>Leads from this person</h3>
         {leadsLoading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading leads…</div>}
@@ -3896,16 +4013,20 @@ function EventsPage({ showToast }) {
 
   useEffect(() => { setEventsPage(1) }, [search, statusFilter])
 
-  const startEdit = (e) => {
-    setEditingId(e.event_id)
+const startEdit = (p) => {
+    setEditingId(p.person_id)
+
     setEditForm({
-      event_name: e.event_name || '',
-      event_type: e.event_type || '',
-      location: e.location || '',
-      country: e.country || '',
-      status: e.status || '',
-      start_date: e.start_date || '',
-      end_date: e.end_date || '',
+      first_name: p.first_name || '',
+      last_name: p.last_name || '',
+      email: p.email || '',
+      email1: p.email1 || '',
+      job_title: p.job_title || '',
+      notes: p.notes || '',
+      country: p.country || '',
+      status: p.status || '',
+      industry: p.industry || '',
+      linkedin_url: p.linkedin_url || '',
     })
   }
   const cancelEdit = () => { setEditingId(null); setEditForm(null) }
@@ -4559,7 +4680,7 @@ function EventForm({ showToast }) {
 // is why the Create nav item rendered a blank page.
 // ============================================================================
 function CreatePage({ showToast }) {
-  const [tab, setTab] = useState('person') // 'person' | 'event'
+  const [tab, setTab] = useState('person')
 
   return (
     <div className="crm-create-wrap">
