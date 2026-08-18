@@ -747,6 +747,21 @@ const CSS = `
   .crm-sort-btn { border: none; background: transparent; padding: 0; margin: 0; line-height: 0; color: var(--ink-400); cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .crm-sort-btn:hover { color: var(--ink-700); }
   .crm-sort-btn.active { color: var(--accent-ink); }
+
+  .crm-sort-text-btn {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-700);
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1;
+}
+.crm-sort-text-btn:hover { background: var(--paper); }
+.crm-sort-text-btn.active { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent); }
 `
 
 // ---------------------------------------------------------------------------
@@ -1258,24 +1273,24 @@ function SortButtons({ columnKey, sortConfig, onSort }) {
   const isAsc = sortConfig.column === columnKey && sortConfig.direction === 'asc'
   const isDesc = sortConfig.column === columnKey && sortConfig.direction === 'desc'
   return (
-    <div className="crm-sort-btns">
+    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
       <button
         type="button"
-        className={`crm-sort-btn${isAsc ? ' active' : ''}`}
+        className={`crm-sort-text-btn${isAsc ? ' active' : ''}`}
         onClick={() => onSort(columnKey, 'asc')}
-        aria-label={`Sort ${columnKey} ascending`}
-        title="Sort A→Z"
+        aria-label={`Sort ${columnKey} A to Z`}
+        title="Sort A to Z"
       >
-        <ChevronUp size={12} />
+        A→Z
       </button>
       <button
         type="button"
-        className={`crm-sort-btn${isDesc ? ' active' : ''}`}
+        className={`crm-sort-text-btn${isDesc ? ' active' : ''}`}
         onClick={() => onSort(columnKey, 'desc')}
-        aria-label={`Sort ${columnKey} descending`}
-        title="Sort Z→A"
+        aria-label={`Sort ${columnKey} Z to A`}
+        title="Sort Z to A"
       >
-        <ChevronDown size={12} />
+        Z→A
       </button>
     </div>
   )
@@ -1641,23 +1656,13 @@ const saveLeadPurpose = async (personId) => {
         return false
       }
 
-      if (
-        company &&
-        !companyName
-          .toLowerCase()
-          .includes(company)
-      ) {
-        return false
-      }
+if (company && !companyName.toLowerCase().startsWith(company)) {
+  return false
+}
 
-      if (
-        country &&
-        !(p.country || '')
-          .toLowerCase()
-          .includes(country)
-      ) {
-        return false
-      }
+if (country && !(p.country || '').toLowerCase().startsWith(country)) {
+  return false
+}
 
       if (
         f.status &&
