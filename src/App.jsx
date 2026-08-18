@@ -127,6 +127,30 @@ function getPersonNavNeighbors(personId) {
     nextId: idx < ids.length - 1 ? ids[idx + 1] : null,
   }
 }
+async function buildPersonNavListFromDB() {
+  const PAGE = 1000
+  let allRows = []
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('people')
+      .select('person_id')
+      .order('created_at', { ascending: false })
+      .order('person_id', { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) return []
+    allRows = allRows.concat(data || [])
+    if (!data || data.length < PAGE) break
+    from += PAGE
+  }
+
+  const { data: leadRows } = await supabase.from('leads').select('person_id')
+  const leadIds = new Set((leadRows || []).map(r => r.person_id))
+
+  const ids = allRows.map(r => r.person_id).filter(id => !leadIds.has(id))
+  savePersonNavList(ids)
+  return ids
+}
 
 function openPersonInNewTab(personId) {
   const url = new URL(window.location.href)
@@ -3191,9 +3215,27 @@ function PersonDetailPage({
   onLeadCreated,
   onLeadRemoved
 }) {
-  const [neighbors, setNeighbors] = useState({ previousId: null, nextId: null })
+const [neighbors, setNeighbors] = useState({ previousId: null, nextId: null })
   useEffect(() => {
-    setNeighbors(getPersonNavNeighbors(personId))
+    let cancelled = false
+    const result = getPersonNavNeighbors(personId)
+    if (result.previousId || result.nextId) {
+      setNeighbors(result)
+      return
+    }
+    // Nav list is empty/stale (e.g. person was opened from outside the
+    // People page) — rebuild it fresh from Supabase as a fallback.
+    ;(async () => {
+      const ids = await buildPersonNavListFromDB()
+      if (cancelled) return
+      const idx = ids.findIndex(id => String(id) === String(personId))
+      if (idx === -1) { setNeighbors({ previousId: null, nextId: null }); return }
+      setNeighbors({
+        previousId: idx > 0 ? ids[idx - 1] : null,
+        nextId: idx < ids.length - 1 ? ids[idx + 1] : null,
+      })
+    })()
+    return () => { cancelled = true }
   }, [personId])
 
   const [person, setPerson] = useState(null)
