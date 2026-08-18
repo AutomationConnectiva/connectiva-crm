@@ -103,23 +103,36 @@ function formatDateTime(d) {
 // domain when used directly as an <a href>, which is why clicking it looked
 // like it "redirected once then reopened the app" — it was just React Router
 // (or a full page load) navigating within connectiva-crm itself instead of
-function openPersonInNewTab(personId, previousId = null, nextId = null) {
+const PERSON_NAV_STORAGE_KEY = 'crm_person_nav_ids'
+
+function savePersonNavList(ids) {
+  try {
+    localStorage.setItem(PERSON_NAV_STORAGE_KEY, JSON.stringify(ids))
+  } catch {
+    // localStorage unavailable — Prev/Next will just be disabled
+  }
+}
+
+function getPersonNavNeighbors(personId) {
+  let ids = []
+  try {
+    ids = JSON.parse(localStorage.getItem(PERSON_NAV_STORAGE_KEY) || '[]')
+  } catch {
+    ids = []
+  }
+  const idx = ids.findIndex(id => String(id) === String(personId))
+  if (idx === -1) return { previousId: null, nextId: null }
+  return {
+    previousId: idx > 0 ? ids[idx - 1] : null,
+    nextId: idx < ids.length - 1 ? ids[idx + 1] : null,
+  }
+}
+
+function openPersonInNewTab(personId) {
   const url = new URL(window.location.href)
-
   url.searchParams.set('person', personId)
-
-  if (previousId) {
-    url.searchParams.set('prev', previousId)
-  } else {
-    url.searchParams.delete('prev')
-  }
-
-  if (nextId) {
-    url.searchParams.set('next', nextId)
-  } else {
-    url.searchParams.delete('next')
-  }
-
+  url.searchParams.delete('prev')
+  url.searchParams.delete('next')
   window.open(url.toString(), '_blank', 'noopener,noreferrer')
 }
 
@@ -998,49 +1011,28 @@ const fetchLeadEventMap = useCallback(async () => {
   // detail = null | { type: 'person' | 'lead', id }
   // When set, a full-page detail view replaces the current page's content.
   const [detail, setDetail] = useState(null)
-  useEffect(() => {
+ useEffect(() => {
   const params = new URLSearchParams(window.location.search)
-
   const personId = params.get('person')
-  const prevId = params.get('prev')
-  const nextId = params.get('next')
 
   if (personId) {
     setDetail({
       type: 'person',
       id: /^\d+$/.test(personId) ? Number(personId) : personId,
-      previousId: prevId
-        ? (/^\d+$/.test(prevId) ? Number(prevId) : prevId)
-        : null,
-      nextId: nextId
-        ? (/^\d+$/.test(nextId) ? Number(nextId) : nextId)
-        : null,
     })
   }
 }, [])
+  
   const openPerson = (id) => setDetail({ type: 'person', id })
   const openLead = (id) => setDetail({ type: 'lead', id })
   const closeDetail = () => setDetail(null)
 
-const navigatePerson = (personId, previousId = null, nextId = null) => {
+const navigatePerson = (personId) => {
   if (!personId) return
-
   const url = new URL(window.location.href)
-
   url.searchParams.set('person', personId)
-
-  if (previousId) {
-    url.searchParams.set('prev', previousId)
-  } else {
-    url.searchParams.delete('prev')
-  }
-
-  if (nextId) {
-    url.searchParams.set('next', nextId)
-  } else {
-    url.searchParams.delete('next')
-  }
-
+  url.searchParams.delete('prev')
+  url.searchParams.delete('next')
   window.location.href = url.toString()
 }
 
@@ -1107,10 +1099,8 @@ const navigatePerson = (personId, previousId = null, nextId = null) => {
 
         <main className="crm-content">
           {detail && detail.type === 'person' && (
-            <PersonDetailPage
+           <PersonDetailPage
               personId={detail.id}
-              previousPersonId={detail.previousId}
-              nextPersonId={detail.nextId}
               onNavigatePerson={navigatePerson}
               showToast={showToast}
               onOpenLead={openLead}
@@ -1573,6 +1563,10 @@ const saveLeadPurpose = async (personId) => {
   useEffect(() => {
     setPeoplePage(1)
   }, [columnFilters, leadPurposeFilter])
+
+  useEffect(() => {
+    savePersonNavList(filtered.map(p => p.person_id))
+  }, [filtered])
 
   // ============================================================
   // EDIT PERSON
@@ -2229,20 +2223,6 @@ showToast(
                 peoplePage
               ).map(p => {
 
-                const currentIndex = filtered.findIndex(
-  person => person.person_id === p.person_id
-)
-
-const previousPerson =
-  currentIndex > 0
-    ? filtered[currentIndex - 1]
-    : null
-
-const nextPerson =
-  currentIndex < filtered.length - 1
-    ? filtered[currentIndex + 1]
-    : null
-
                 const av = avatarStyle(
                   p.first_name +
                     p.last_name
@@ -2399,11 +2379,7 @@ return (
   if (selecting) {
     togglePerson(p.person_id)
   } else {
-    openPersonInNewTab(
-      p.person_id,
-      previousPerson?.person_id,
-      nextPerson?.person_id
-    )
+   openPersonInNewTab(p.person_id)
   }
 }}
     >
@@ -2428,11 +2404,7 @@ return (
                 // Opens in a NEW tab instead of navigating this one, so
                 // viewing someone's profile mid-selection never discards
                 // the batch you've already built up in the side panel.
-                openPersonInNewTab(
-                    p.person_id,
-                    previousPerson?.person_id,
-                    nextPerson?.person_id
-                 )
+                openPersonInNewTab(p.person_id)
               }}
               aria-label="View details"
               title="View details (opens in a new tab)"
@@ -3213,14 +3185,17 @@ function LeadsPage({ showToast, onOpenLead }) {
 // ============================================================================
 function PersonDetailPage({
   personId,
-  previousPersonId,
-  nextPersonId,
   onNavigatePerson,
   showToast,
   onOpenLead,
   onLeadCreated,
   onLeadRemoved
 }) {
+  const [neighbors, setNeighbors] = useState({ previousId: null, nextId: null })
+  useEffect(() => {
+    setNeighbors(getPersonNavNeighbors(personId))
+  }, [personId])
+
   const [person, setPerson] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -3408,18 +3383,16 @@ const save = async () => {
   </div>
 
   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-    <button
+   <button
       type="button"
       className="crm-icon-action"
-      onClick={() =>
-        onNavigatePerson(previousPersonId, null, nextPersonId)
-      }
-      disabled={!previousPersonId}
+      onClick={() => onNavigatePerson(neighbors.previousId)}
+      disabled={!neighbors.previousId}
       title="Previous person"
       aria-label="Previous person"
       style={{
-        opacity: previousPersonId ? 1 : 0.35,
-        cursor: previousPersonId ? 'pointer' : 'not-allowed'
+        opacity: neighbors.previousId ? 1 : 0.35,
+        cursor: neighbors.previousId ? 'pointer' : 'not-allowed'
       }}
     >
       <ArrowLeft size={16} />
@@ -3428,20 +3401,17 @@ const save = async () => {
     <button
       type="button"
       className="crm-icon-action"
-      onClick={() =>
-        onNavigatePerson(nextPersonId)
-      }
-      disabled={!nextPersonId}
+      onClick={() => onNavigatePerson(neighbors.nextId)}
+      disabled={!neighbors.nextId}
       title="Next person"
       aria-label="Next person"
       style={{
-        opacity: nextPersonId ? 1 : 0.35,
-        cursor: nextPersonId ? 'pointer' : 'not-allowed'
+        opacity: neighbors.nextId ? 1 : 0.35,
+        cursor: neighbors.nextId ? 'pointer' : 'not-allowed'
       }}
     >
       <ArrowRight size={16} />
     </button>
-
     <button
       className="crm-submit-btn"
       style={{ width: 'auto', padding: '10px 18px' }}
