@@ -698,10 +698,24 @@ const CSS = `
   .crm-channel-toggle.off { border-color: var(--line); background: var(--paper); color: var(--ink-400); }
   .crm-channel-toggle.disabled-live { opacity: 0.5; cursor: not-allowed; }
 
-  /* ---------- Quick convert-to-lead modal (person detail page) ---------- */
+ /* ---------- Quick convert-to-lead modal (person detail page) ---------- */
   .crm-modal-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; }
   .crm-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
   .crm-modal-card { position: relative; background: var(--surface); border-radius: 16px; padding: 24px; width: 100%; max-width: 480px; max-height: 88vh; overflow: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.28); }
+
+  /* ---------- Leads page: event picker (step 1) ---------- */
+  .crm-event-picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+  .crm-event-picker-card {
+    display: flex; flex-direction: column; gap: 10px; text-align: left;
+    padding: 18px; border-radius: 14px; border: 1px solid var(--line);
+    background: var(--surface); cursor: pointer; font-family: inherit;
+    transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+  }
+  .crm-event-picker-card:hover { border-color: var(--accent); box-shadow: 0 6px 18px rgba(14,111,92,0.12); transform: translateY(-1px); }
+  .crm-event-picker-card-top { display: flex; align-items: center; justify-content: space-between; }
+  .crm-event-picker-card-icon { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent-ink); flex-shrink: 0; }
+  .crm-event-picker-card-name { font-size: 14.5px; font-weight: 600; color: var(--ink-950); line-height: 1.3; }
+  .crm-event-picker-card-date { font-size: 12px; color: var(--ink-400); display: flex; align-items: center; }
 `
 
 // ---------------------------------------------------------------------------
@@ -3053,48 +3067,43 @@ function LeadsPage({ showToast, onOpenLead }) {
   // -------------------------------------------------------------------------
   // Step 1: event picker — shown until an event (or "no event") is chosen.
   // -------------------------------------------------------------------------
-  if (!selectedEventId) {
+if (!selectedEventId) {
     return (
       <div>
         <p className="crm-confirm-note" style={{ marginBottom: 16 }}>
           Pick an event to see its leads.
         </p>
         {pickerEventsLoading && <div className="crm-loading"><Loader2 size={16} className="crm-spin" /> Loading events…</div>}
-        {!pickerEventsLoading && (
-          <div className="crm-confirm-list" style={{ maxHeight: 'none' }}>
-            <div
-              className="crm-confirm-row"
-              style={{ cursor: 'pointer' }}
-              onClick={() => setSelectedEventId('NONE')}
-            >
-              <div>
-                <div className="crm-confirm-row-name">No event</div>
-                <div className="crm-confirm-row-sub">General leads not tied to any event</div>
-              </div>
-            </div>
+        {!pickerEventsLoading && pickerEvents.length === 0 && (
+          <div className="crm-confirm-empty" style={{ border: '1px solid var(--line)', borderRadius: 12 }}>
+            No events yet — create one first.
+          </div>
+        )}
+        {!pickerEventsLoading && pickerEvents.length > 0 && (
+          <div className="crm-event-picker-grid">
             {pickerEvents.map(e => (
-              <div
+              <button
                 key={e.event_id}
-                className="crm-confirm-row"
-                style={{ cursor: 'pointer' }}
+                type="button"
+                className="crm-event-picker-card"
                 onClick={() => setSelectedEventId(e.event_id)}
               >
-                <div>
-                  <div className="crm-confirm-row-name">{e.event_name}</div>
-                  <div className="crm-confirm-row-sub">{formatDate(e.start_date)}</div>
+                <div className="crm-event-picker-card-top">
+                  <span className="crm-event-picker-card-icon"><Calendar size={15} /></span>
+                  <Badge value={e.status} />
                 </div>
-                <Badge value={e.status} />
-              </div>
+                <div className="crm-event-picker-card-name">{e.event_name}</div>
+                <div className="crm-event-picker-card-date">
+                  <Clock size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
+                  {formatDate(e.start_date)}
+                </div>
+              </button>
             ))}
-            {pickerEvents.length === 0 && (
-              <div className="crm-confirm-empty">No events yet — create one first.</div>
-            )}
           </div>
         )}
       </div>
     )
   }
-
   // -------------------------------------------------------------------------
   // Step 2: leads table, scoped to selectedEventId.
   // -------------------------------------------------------------------------
