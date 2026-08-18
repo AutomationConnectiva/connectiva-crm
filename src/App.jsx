@@ -2288,35 +2288,19 @@ showToast(
                 </th>
 
                 <th />
-
-                <th>
-                  <select
-                    className="crm-cell-select"
-                    value={columnFilters.industry}
-                    onChange={setColFilter('industry')}
+               <th>
+                 <select
+                     className="crm-cell-select"
+                     value={columnFilters.industry}
+                     onChange={setColFilter('industry')}
                   >
-
-                <th>
-                  <select
-                    className="crm-cell-select"
-                    value={columnFilters.industry}
-                    onChange={setColFilter('industry')}
-                  >
-                    <option value="">
-                      All
-                    </option>
-
-                    {INDUSTRY_OPTIONS.map(i => (
-                      <option
-                        key={i}
-                        value={i}
-                      >
-                        {i}
-                      </option>
-                    ))}
-                  </select>
+               <option value="">All</option>
+               {INDUSTRY_OPTIONS.map(i => (
+              <option key={i} value={i}>{i}</option>
+                 ))}
+                </select>
                 </th>
-
+               
                 <th>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <input
