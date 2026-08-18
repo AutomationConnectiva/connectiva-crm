@@ -105,18 +105,22 @@ function formatDateTime(d) {
 // (or a full page load) navigating within connectiva-crm itself instead of
 const PERSON_NAV_STORAGE_KEY = 'crm_person_nav_ids'
 
+// sessionStorage (not localStorage) — each tab gets its own isolated copy,
+// cloned at the moment window.open() fires. This is what stops a second
+// tab's background People-page mount from clobbering the filtered order
+// you actually clicked through in the first tab.
 function savePersonNavList(ids) {
   try {
-    localStorage.setItem(PERSON_NAV_STORAGE_KEY, JSON.stringify(ids))
+    sessionStorage.setItem(PERSON_NAV_STORAGE_KEY, JSON.stringify(ids))
   } catch {
-    // localStorage unavailable — Prev/Next will just be disabled
+    // sessionStorage unavailable — Prev/Next will just be disabled
   }
 }
 
 function getPersonNavNeighbors(personId) {
   let ids = []
   try {
-    ids = JSON.parse(localStorage.getItem(PERSON_NAV_STORAGE_KEY) || '[]')
+    ids = JSON.parse(sessionStorage.getItem(PERSON_NAV_STORAGE_KEY) || '[]')
   } catch {
     ids = []
   }
@@ -127,6 +131,20 @@ function getPersonNavNeighbors(personId) {
     nextId: idx < ids.length - 1 ? ids[idx + 1] : null,
   }
 }
+
+// navIds (optional): the exact ordered list of ids currently on screen
+// (i.e. PeoplePage's `filtered`) — saved right before opening the new tab,
+// so the new tab's Prev/Next always matches what you were actually looking
+// at, filters and all.
+function openPersonInNewTab(personId, navIds) {
+  if (navIds) savePersonNavList(navIds)
+  const url = new URL(window.location.href)
+  url.searchParams.set('person', personId)
+  url.searchParams.delete('prev')
+  url.searchParams.delete('next')
+  window.open(url.toString(), '_blank', 'noopener,noreferrer')
+}
+
 async function buildPersonNavListFromDB() {
   const PAGE = 1000
   let allRows = []
@@ -150,14 +168,6 @@ async function buildPersonNavListFromDB() {
   const ids = allRows.map(r => r.person_id).filter(id => !leadIds.has(id))
   savePersonNavList(ids)
   return ids
-}
-
-function openPersonInNewTab(personId) {
-  const url = new URL(window.location.href)
-  url.searchParams.set('person', personId)
-  url.searchParams.delete('prev')
-  url.searchParams.delete('next')
-  window.open(url.toString(), '_blank', 'noopener,noreferrer')
 }
 
 function externalUrl(u) {
@@ -1588,10 +1598,6 @@ const saveLeadPurpose = async (personId) => {
     setPeoplePage(1)
   }, [columnFilters, leadPurposeFilter])
 
-  useEffect(() => {
-    savePersonNavList(filtered.map(p => p.person_id))
-  }, [filtered])
-
   // ============================================================
   // EDIT PERSON
   // ============================================================
@@ -2403,7 +2409,7 @@ return (
   if (selecting) {
     togglePerson(p.person_id)
   } else {
-   openPersonInNewTab(p.person_id)
+   openPersonInNewTab(p.person_id, filtered.map(x => x.person_id))
   }
 }}
     >
@@ -2428,7 +2434,7 @@ return (
                 // Opens in a NEW tab instead of navigating this one, so
                 // viewing someone's profile mid-selection never discards
                 // the batch you've already built up in the side panel.
-                openPersonInNewTab(p.person_id)
+                openPersonInNewTab(p.person_id, filtered.map(x => x.person_id))
               }}
               aria-label="View details"
               title="View details (opens in a new tab)"
@@ -3255,6 +3261,19 @@ const [neighbors, setNeighbors] = useState({ previousId: null, nextId: null })
   const [showConvert, setShowConvert] = useState(false)
   const [creatingLead, setCreatingLead] = useState(false)
 
+  const [purposeOptions, setPurposeOptions] = useState(LEAD_PURPOSE_CHOICES)
+  const [statusOptions, setStatusOptions] = useState([])
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase.from('people').select('status, lead_purpose')
+      if (error || !data) return
+      setStatusOptions(Array.from(new Set(data.map(r => r.status).filter(Boolean))).sort())
+      setPurposeOptions(
+        Array.from(new Set([...LEAD_PURPOSE_CHOICES, ...data.map(r => r.lead_purpose).filter(Boolean)])).sort()
+      )
+    })()
+  }, [])
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -3485,8 +3504,17 @@ const save = async () => {
           <div><FieldLabel>Country</FieldLabel><input className="crm-input" value={form.country} onChange={set('country')} /></div>
           <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} showToast={showToast} /></div>
         </div>
-        <div className="crm-form-row">
-          <div><FieldLabel>Lead purpose</FieldLabel><input className="crm-input" value={form.lead_purpose} onChange={set('lead_purpose')} placeholder="e.g. Sponsor Acquisition, Event Invitation" /></div>
+           <div className="crm-form-row">
+          <div>
+            <FieldLabel>Lead purpose</FieldLabel>
+            <select className="crm-select" value={form.lead_purpose} onChange={set('lead_purpose')}>
+              <option value="">—</option>
+              {form.lead_purpose && !purposeOptions.includes(form.lead_purpose) && (
+                <option value={form.lead_purpose}>{form.lead_purpose}</option>
+              )}
+              {purposeOptions.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
           <div>
             <FieldLabel>Owner email</FieldLabel>
             <select className="crm-select" value={form.owner_email} onChange={set('owner_email')}>
@@ -3501,7 +3529,16 @@ const save = async () => {
         </div>
         <div className="crm-form-row">
           <div><FieldLabel>LinkedIn URL</FieldLabel><input className="crm-input" value={form.linkedin_url} onChange={set('linkedin_url')} /></div>
-          <div><FieldLabel>Status</FieldLabel><input className="crm-input" value={form.status} onChange={set('status')} /></div>
+          <div>
+            <FieldLabel>Status</FieldLabel>
+            <select className="crm-select" value={form.status} onChange={set('status')}>
+              <option value="">—</option>
+              {form.status && !statusOptions.includes(form.status) && (
+                <option value={form.status}>{form.status}</option>
+              )}
+              {statusOptions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
         </div>
         <button className="crm-submit-btn" onClick={save} disabled={saving}>
           {saving ? <Loader2 size={15} className="crm-spin" /> : <Save size={15} />} Save changes
