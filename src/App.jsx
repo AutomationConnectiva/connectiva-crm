@@ -1723,6 +1723,7 @@ if (country && !(p.country || '').toLowerCase().startsWith(country)) {
       email: p.email || '',
       email1: p.email1 || '',
       job_title: p.job_title || '',
+      notes: p.notes || '',
       country: p.country || '',
       status: p.status || '',
       industry: p.industry || '',
