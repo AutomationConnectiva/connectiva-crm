@@ -1345,6 +1345,8 @@ function PeoplePage({
     company: '',
     country: '',
     status: '',
+    phone: '',
+    mobile: '',
   })
 
   const [leadPurposeFilter, setLeadPurposeFilter] = useState('')
@@ -1603,6 +1605,8 @@ const saveLeadPurpose = async (personId) => {
     const jt = f.job_title.toLowerCase().trim()
     const company = f.company.toLowerCase().trim()
     const country = f.country.toLowerCase().trim()
+    const phone = f.phone.toLowerCase().trim()  
+    const mobile = f.mobile.toLowerCase().trim() 
 
     const result = people.filter(p => {
 
@@ -1723,6 +1727,8 @@ if (country && !(p.country || '').toLowerCase().startsWith(country)) {
       email: p.email || '',
       email1: p.email1 || '',
       job_title: p.job_title || '',
+      phone: p.phone || '',
+      mobile: p.mobile || '',
       notes: p.notes || '',
       country: p.country || '',
       status: p.status || '',
@@ -2109,7 +2115,7 @@ showToast(
   const selecting = mode === 'select'
 
   const COLUMN_COUNT =
-    selecting ? 13 : 12
+    selecting ? 15 : 14
 
   // ============================================================
   // TABLE
@@ -2243,6 +2249,8 @@ showToast(
                 <th>Email</th>
                 <th>Email 1</th>
                 <th>Job title</th>
+                <th>Phone</th>
+                <th>Mobile</th>
                 <th>Notes</th>
                 <th>Industry</th>
                 <th>Company</th>
@@ -2292,7 +2300,20 @@ showToast(
                     placeholder="Filter…"
                   />
                 </th>
-
+                <th><input
+                      className="crm-cell-input"
+                      value={columnFilters.phone}
+                      onChange={setColFilter('phone')}
+                      placeholder="Filter…"
+                      />
+                </th>
+                <th><input
+                      className="crm-cell-input"
+                      value={columnFilters.mobile}
+                      onChange={setColFilter('mobile')}
+                      placeholder="Filter…"
+                      />
+                </th>
                 <th />
                <th>
                  <select
@@ -2437,7 +2458,17 @@ if (isEditing) {
           onChange={e => setEditForm({ ...editForm, job_title: e.target.value })}
         />
       </td>
-
+      <td><input
+            className="crm-cell-input"
+            value={editForm.phone}
+            onChange={e => setEditForm({ ...editForm, phone: e.target.value })}
+            />
+      </td>
+      <td><input
+            className="crm-cell-input"
+            value={editForm.mobile} onChange={e => setEditForm({ ...editForm, mobile: e.target.value })}
+            />
+      </td>
       <td>
         <input
           className="crm-cell-input"
@@ -2598,6 +2629,8 @@ return (
        <td>{p.email}</td>
       <td>{p.email1 || '-'}</td>
       <td>{p.job_title || '-'}</td>
+      <td>{p.phone || '—'}</td>
+      <td>{p.mobile || '—'}</td>
       <td className="crm-notes-cell" title={p.notes || ''}>{p.notes || '—'}</td>
       <td>{p.industry || '-'}</td>
       <td>{p.companies?.company_name || '—'}</td>
@@ -2699,7 +2732,7 @@ return (
 })}
 
 {filtered.length === 0 && (
-                <tr className="crm-empty-row"><td colSpan={10}>No leads match these filters.</td></tr>
+                <tr className="crm-empty-row"><td colSpan={14}>No leads match these filters.</td></tr>
               )}
 </tbody>
 </table>
@@ -3624,6 +3657,10 @@ const save = async () => {
           <div><FieldLabel>Country</FieldLabel><input className="crm-input" value={form.country} onChange={set('country')} /></div>
           <div><FieldLabel>Company</FieldLabel><CompanyPicker value={company} onChange={setCompany} showToast={showToast} /></div>
         </div>
+        <div className="crm-form-row">
+          <div><FieldLabel>Phone</FieldLabel><input className="crm-input" value={form.phone} onChange={set('phone')} /></div>
+          <div><FieldLabel>Mobile</FieldLabel><input className="crm-input" value={form.mobile} onChange={set('mobile')} /></div>
+        </div>
            <div className="crm-form-row">
           <div>
             <FieldLabel>Lead purpose</FieldLabel>
@@ -4012,6 +4049,8 @@ const startEdit = (p) => {
       email: p.email || '',
       email1: p.email1 || '',
       job_title: p.job_title || '',
+      phone: p.phone || '',
+      mobile: p.mobile || '',
       notes: p.notes || '',
       country: p.country || '',
       status: p.status || '',
