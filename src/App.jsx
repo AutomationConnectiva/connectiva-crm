@@ -924,6 +924,7 @@ async function resolveCompanyId(companyInput) {
       .update({
         company_name: companyInput.company_name?.trim() || null,
         country: companyInput.country?.trim() || null,
+        updated_at: new Date().toISOString(),
       })
       .eq('company_id', companyInput.company_id)
     if (error) return { companyId: null, error }
