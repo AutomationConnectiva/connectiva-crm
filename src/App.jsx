@@ -20,13 +20,12 @@ const PARTICIPANT_STATUS_OPTIONS = ['Invited', 'Confirmed', 'Attended', 'Cancell
 const INDUSTRY_OPTIONS = ['Insurance', 'Banking', 'Finance']
 const LEAD_PURPOSE_CHOICES = ['Delegate Acquisition', 'Speaker Acquisition', 'Sponsor Acquisition']
 // people.owner_email — must exactly match what the Make.com send scenario
-// matches against (nabi@ / alia@ / abdool@ / chris@connectiva.events). A
+// matches against ( alia@ / abdool@ / chris@connectiva.events). A
 // free-text input here risks the exact same silent-mismatch bug found
 // earlier (a trailing space on one row meant that lead was invisible to
 // its assigned persona) — a fixed dropdown makes that class of bug
 // impossible to reintroduce by hand.
 const OWNER_EMAIL_OPTIONS = [
-  'nabi@connectiva.events',
   'alia@connectiva.events',
   'abdool@connectiva.events',
   'chris@connectiva.events',
@@ -3811,7 +3810,7 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
     setError(null)
     const { data, error } = await supabase
       .from('leads')
-      .select('*, people(person_id, first_name, last_name, email, mobile, phone), companies(company_name), events(event_name)')
+      .select('*, people(person_id, first_name, last_name, email, mobile, phone, owner_email), companies(company_name), events(event_name)')
       .eq('lead_id', leadId)
       .single()
     if (error) setError(error.message)
@@ -3905,7 +3904,12 @@ function LeadDetailCard({ leadId, showToast, onOpenPerson, hidePersonChip }) {
               {LEAD_PURPOSE_CHOICES.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
-          <div><FieldLabel>Owner</FieldLabel><input className="crm-input" value={form.owner} onChange={set('owner')} /></div>
+         <div>
+  <FieldLabel>Owner</FieldLabel>
+  <div className="crm-input" style={{ background: 'var(--paper)', color: 'var(--ink-700)' }}>
+    {lead.people?.owner_email || '—'}
+  </div>
+</div>
         </div>
 
         <div>
