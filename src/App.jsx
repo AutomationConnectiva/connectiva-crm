@@ -455,7 +455,8 @@ function CompanyEditModal({ company, onClose, onSaved, showToast }) {
     setSaving(true)
     const { error } = await supabase
       .from('companies')
-      .update({ company_name: name.trim(), country: country.trim() || null })
+      .update({ company_name: name.trim(), country: country.trim() || null, updated_at: new Date().toISOString(),
+              })
       .eq('company_id', company.company_id)
     setSaving(false)
     if (error) {
@@ -963,7 +964,6 @@ async function resolveCompanyId(companyInput) {
 function QuickConvertModal({ person, onClose, onConfirm, creating }) {
   const [form, setForm] = useState({
     lead_purpose: '',
-    lead_status: 'New',
     nurture_stage: 'Outreach',
     owner: '',
     notes: '',
@@ -984,13 +984,13 @@ function QuickConvertModal({ person, onClose, onConfirm, creating }) {
         <h4 className="crm-confirm-heading">Convert {person.first_name} {person.last_name} to a lead</h4>
         <p className="crm-confirm-note">Defaults are pre-filled — adjust anything before creating.</p>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="crm-form-row">
             <div>
               <FieldLabel>Status</FieldLabel>
-              <select className="crm-select" value={form.lead_status} onChange={set('lead_status')}>
-                {LEAD_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <div className="crm-input" style={{ background: 'var(--paper)', color: 'var(--ink-700)' }}>
+                New
+              </div>
             </div>
             <div>
               <FieldLabel>Nurture stage</FieldLabel>
@@ -1033,7 +1033,7 @@ function QuickConvertModal({ person, onClose, onConfirm, creating }) {
           <button
             className="crm-submit-btn"
             style={{ width: 'auto', padding: '10px 20px' }}
-            onClick={() => onConfirm({ ...form, ...buildChannelRowFields((_, key) => channels[key], null) })}
+            onClick={() => onConfirm({ ...form, lead_status: 'New',...buildChannelRowFields((_, key) => channels[key], null) })}
             disabled={creating}
           >
             {creating ? <Loader2 size={15} className="crm-spin" /> : <Check size={15} />} Create lead
