@@ -1223,7 +1223,7 @@ const navigatePerson = (personId) => {
           )}
           {!detail && activePage === 'leads' && <LeadsPage showToast={showToast} onOpenLead={openLead} />}
           {!detail && activePage === 'events' && <EventsPage showToast={showToast} />}
-          {!detail && activePage === 'approval' && <ApprovalPage showToast={showToast} />}
+          {!detail && activePage === 'approval' && <Approvalpage showToast={showToast} />}
           {!detail && activePage === 'attendees' && <AttendeesPage showToast={showToast} />}
           {!detail && activePage === 'create' && <CreatePage showToast={showToast} />}
         </main>
