@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from './lib/supabase'
+import ApprovalPage from './ApprovalPage'
 import {
   Users, UserPlus, Calendar, Target, Menu, X, Search,
   Clock, Check, Save, XCircle, Loader2,
@@ -68,6 +69,7 @@ const NAV_ITEMS = [
   { key: 'leads', label: 'Leads', icon: Target },
   { key: 'events', label: 'Events', icon: Calendar },
   { key: 'attendees', label: 'Attendees', icon: UserCheck },
+  { key: 'approval', label: 'Approval', icon: Mail },
   { key: 'create', label: 'Create', icon: UserPlus },
 ]
 
@@ -1220,6 +1222,7 @@ const navigatePerson = (personId) => {
           )}
           {!detail && activePage === 'leads' && <LeadsPage showToast={showToast} onOpenLead={openLead} />}
           {!detail && activePage === 'events' && <EventsPage showToast={showToast} />}
+          {!detail && activePage === 'approval' && (<ApprovalPage showToast={showToast} />)}
           {!detail && activePage === 'attendees' && <AttendeesPage showToast={showToast} />}
           {!detail && activePage === 'create' && <CreatePage showToast={showToast} />}
         </main>
