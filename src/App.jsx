@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from './lib/supabase'
-import ApprovalPage from './ApprovalPage'
+import ApprovalPage from './Approvalpage'
 import {
   Users, UserPlus, Calendar, Target, Menu, X, Search,
   Clock, Check, Save, XCircle, Loader2,
