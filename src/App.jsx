@@ -1149,6 +1149,7 @@ const navigatePerson = (personId) => {
         sub: 'Full record — view, edit, and save changes below',
       }
     : {
+        approval: { title: 'Approval', sub: 'Review AI-drafted replies before they go out' },
         people: { title: 'People', sub: 'All contacts synced from Supabase' },
         leads: { title: 'Leads', sub: 'Every lead across every channel' },
         events: { title: 'Events', sub: 'Events and who attended them' },
