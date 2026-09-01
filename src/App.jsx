@@ -1472,23 +1472,34 @@ const saveLeadPurpose = async (personId) => {
   // ============================================================
 
   const fetchLeadPersonIds = useCallback(async () => {
+  const PAGE = 1000
+  let allRows = []
+  let from = 0
+
+  while (true) {
     const { data, error } = await supabase
       .from('leads')
       .select('person_id')
+      .range(from, from + PAGE - 1)
 
     if (error) {
       setError(error.message)
       return
     }
 
-    const ids = new Set(
-      (data || [])
-        .map(row => row.person_id)
-        .filter(Boolean)
-    )
+    allRows = allRows.concat(data || [])
+    if (!data || data.length < PAGE) break
+    from += PAGE
+  }
 
-    setLeadPersonIds(ids)
-  }, [])
+  const ids = new Set(
+    allRows
+      .map(row => row.person_id)
+      .filter(Boolean)
+  )
+
+  setLeadPersonIds(ids)
+}, [])
 
   // ============================================================
   // FETCH EVENTS
