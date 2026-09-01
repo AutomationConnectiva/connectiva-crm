@@ -1695,13 +1695,6 @@ if (country && !(p.country || '').toLowerCase().startsWith(country)) {
         return false
       }
 
-      if (
-        selectedEventId &&
-        p.lead_purpose !== selectedEventId
-      ) {
-        return false
-      }
-
    return true
     })
 
