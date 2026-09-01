@@ -1471,7 +1471,7 @@ const saveLeadPurpose = async (personId) => {
   // they are considered a lead and will be hidden from People.
   // ============================================================
 
-  const fetchLeadPersonIds = useCallback(async () => {
+const fetchLeadPersonIds = useCallback(async () => {
   const PAGE = 1000
   let allRows = []
   let from = 0
