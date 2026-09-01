@@ -1213,11 +1213,14 @@ const navigatePerson = (personId) => {
           )}
           {activePage === 'people' && (
          <div style={{ display: detail ? 'none' : 'block' }}>
-           <PeoplePage
+          <PeoplePage
              showToast={showToast}
              onOpenPerson={openPerson}
              sidebarCollapsed={collapsed}
              setSidebarCollapsed={setCollapsed}
+             leadEventMap={leadEventMap}
+             onLeadCreated={addToLeadEventMap}
+             onLeadRemoved={removeFromLeadEventMap}
            />
           </div>
           )}
@@ -1318,6 +1321,9 @@ function PeoplePage({
   onOpenPerson,
   sidebarCollapsed,
   setSidebarCollapsed,
+  leadEventMap,     
+  onLeadCreated,       
+  onLeadRemoved,      
 }) {
   const [people, setPeople] = useState([])
   const [leadPersonIds, setLeadPersonIds] = useState(new Set())
@@ -1353,7 +1359,7 @@ function PeoplePage({
     mobile: '',
   })
 
-  const [leadPurposeFilter, setLeadPurposeFilter] = useState('')
+  const [selectedEventId, setSelectedEventId] = useState('')
 
   const setColFilter = (key) => (e) =>
     setColumnFilters(prev => ({
@@ -1625,10 +1631,9 @@ const fetchLeadPersonIds = useCallback(async () => {
 
     const result = people.filter(p => {
 
-      // 🚫 ANY lead = NOT a People record anymore
-      if (leadPersonIds.has(p.person_id)) {
-        return false
-      }
+     if (selectedEventId && leadEventMap.get(p.person_id)?.has(selectedEventId)) {
+      return false
+    }
 
       const companyName = p.companies?.company_name || ''
 
@@ -1691,8 +1696,8 @@ if (country && !(p.country || '').toLowerCase().startsWith(country)) {
       }
 
       if (
-        leadPurposeFilter &&
-        p.lead_purpose !== leadPurposeFilter
+        selectedEventId &&
+        p.lead_purpose !== selectedEventId
       ) {
         return false
       }
@@ -1720,14 +1725,14 @@ if (country && !(p.country || '').toLowerCase().startsWith(country)) {
   }, [
     people,
     columnFilters,
-    leadPurposeFilter,
+    selectedEventId,
     leadPersonIds,
     sortConfig,
   ])
 
   useEffect(() => {
     setPeoplePage(1)
-  }, [columnFilters, leadPurposeFilter, sortConfig])
+  }, [columnFilters, selectedEventId, sortConfig])
 
   // ============================================================
   // EDIT PERSON
@@ -1850,9 +1855,9 @@ if (country && !(p.country || '').toLowerCase().startsWith(country)) {
   // ============================================================
 
   const startConvert = () => {
-    if (!leadPurposeFilter) {
+    if (!selectedEventId) {
       showToast(
-        'Pick a purpose from the dropdown first',
+        'Pick a Event',
         true
       )
       return
@@ -2026,14 +2031,10 @@ if (country && !(p.country || '').toLowerCase().startsWith(country)) {
       person_id: p.person_id,
       company_id: p.company_id || null,
 
-      // IMPORTANT:
-      // Event is optional and dynamic.
-      // NO hardcoded BANCEE26.
-      event_id: linkEventId || null,
+      event_id: selectedEventId,
 
       lead_status: 'New',
       nurture_stage: 'Outreach',
-      lead_purpose: leadPurposeFilter,
 
       ...buildChannelRowFields(
         effectiveChannelValue,
@@ -2075,6 +2076,8 @@ setLeadPersonIds(prev => {
   return next
 })
 
+rows.forEach(row => onLeadCreated?.(row.person_id, selectedEventId))
+
 fetchPeople()
 fetchLeadPersonIds()
     
@@ -2110,6 +2113,8 @@ showToast(
               return next
             })
 
+           rows.forEach(row => onLeadRemoved?.(row.person_id, selectedEventId))
+      
            fetchPeople()
         fetchLeadPersonIds()
 
@@ -2142,25 +2147,6 @@ showToast(
 
         {selecting ? (
           <>
-            <select
-              className="crm-filter-select"
-              value={linkEventId}
-              onChange={handleLinkEventChange}
-              disabled={eventsLoading}
-            >
-
-              {events.map(e => (
-                <option
-                  key={e.event_id}
-                  value={e.event_id}
-                >
-                  {e.event_name} (
-                  {formatDate(e.start_date)}
-                  )
-                </option>
-              ))}
-            </select>
-
             <button
               className="crm-toggle-chip"
               onClick={selectAllOnPage}
@@ -2186,30 +2172,19 @@ showToast(
           </>
         ) : (
           <>
-            <select
+           <select
               className="crm-filter-select"
-              value={leadPurposeFilter}
-              onChange={e =>
-                setLeadPurposeFilter(
-                  e.target.value
-                )
-              }
-            >
-              <option value="">
-                Select purpose…
-              </option>
-
-              {COMBINED_PURPOSE_OPTIONS.map(
-                p => (
-                  <option
-                    key={p}
-                    value={p}
-                  >
-                    {p}
-                  </option>
-                )
-              )}
-            </select>
+              value={selectedEventId}
+              onChange={e => setSelectedEventId(e.target.value)}
+              disabled={eventsLoading}
+             >
+  <option value="">Select event…</option>
+  {events.map(e => (
+    <option key={e.event_id} value={e.event_id}>
+      {e.event_name} ({formatDate(e.start_date)})
+    </option>
+  ))}
+</select>
 
             <button
               className="crm-submit-btn"
